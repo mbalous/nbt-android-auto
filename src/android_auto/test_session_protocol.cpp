@@ -1,7 +1,7 @@
 // Offline phone simulator: real AASession, AA frames and TLS, lab identities only.
 // No USB/display access and no listening network socket.
 #define NBT_TLS_PEER_ONLY
-#include "test_tls_memory.c"
+#include "test_tls_memory.cpp"
 #include "aa_session.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>

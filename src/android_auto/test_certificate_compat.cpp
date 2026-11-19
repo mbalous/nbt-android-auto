@@ -15,10 +15,11 @@ int main(int argc, char **argv) {
     mbedtls_x509_crt cert, issuer;
     const mbedtls_md_info_t *md;
     unsigned char der[16384], digest[64];
-    FILE *f;
+    if (argc != 3) return 2;
+    FILE *f = fopen(argv[1], "rb");
     size_t n;
     int extra, rc;
-    if (argc != 3 || !(f=fopen(argv[1],"rb"))) return 2;
+    if (!f) return 2;
     n=fread(der,1,sizeof(der),f); extra=fgetc(f); fclose(f);
     if (!n || extra != EOF) return 2;
     mbedtls_x509_crt_init(&cert); mbedtls_x509_crt_init(&issuer);

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-extern int mbedtls_x509_get_time(unsigned char **, const unsigned char *, mbedtls_x509_time *);
+extern "C" int mbedtls_x509_get_time(unsigned char **, const unsigned char *, mbedtls_x509_time *);
 static void expect(const char *text, int year, int mon, int day, int hour, int min, int sec) {
     unsigned char encoded[64], original[64], *p = encoded;
     mbedtls_x509_time result;
@@ -19,7 +19,7 @@ static void expect(const char *text, int year, int mon, int day, int hour, int m
         fprintf(stderr,"Legacy time test failed: %s rc=%d\n",text,rc); exit(1);
     }
 }
-int main(void) {
+int main() {
     expect("140704000000-0700",2014,7,4,7,0,0);
     expect("480801102123-0700",2048,8,1,17,21,23);
     expect("240301001501+0130",2024,2,29,22,45,1);

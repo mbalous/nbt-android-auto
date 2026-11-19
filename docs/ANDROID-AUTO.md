@@ -435,8 +435,8 @@ Changes enabling this result:
   normalizes the parsed time to UTC. Signed DER/TBS bytes remain unchanged.
   This is a deliberate compatibility extension: RFC 5280 requires Zulu encoding.
   No system library, clock, expiry check or signature verification is changed.
-- `test_legacy_time.c` covers the observed dates, leap days, month/year rollover,
-  malformed offsets and invalid dates. `test_certificate_compat.c` confirms both
+- `test_legacy_time.cpp` covers the observed dates, leap days, month/year rollover,
+  malformed offsets and invalid dates. `test_certificate_compat.cpp` confirms both
   public reference certificates retain their raw bytes and valid signatures
   against the captured issuer key, and rejects a modified TBS digest. The latter
   is signature evidence, not independent authentication of the issuer.

@@ -1,6 +1,6 @@
 // Exercise the exact TLS USB adapter against an in-process TLS server.
 #define main memory_test_main
-#include "test_tls_memory.c"
+#include "test_tls_memory.cpp"
 #undef main
 #include "tls_usb_probe.h"
 #include <vector>

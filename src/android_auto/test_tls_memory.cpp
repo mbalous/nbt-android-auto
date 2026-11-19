@@ -16,18 +16,18 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef struct peer {
+struct peer {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config config;
     mbedtls_x509_crt ca, cert;
     mbedtls_pk_context key;
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context rng;
-    struct peer *other;
+    peer *other;
     unsigned char input[65536];
     size_t used;
     unsigned sends, receives;
-} peer;
+};
 
 static void fail(const char *operation, int code) {
     char error[192];
@@ -43,7 +43,7 @@ static void check(int result, const char *operation) {
 }
 
 static int send_fragment(void *context, const unsigned char *data, size_t size) {
-    peer *p = (peer *)context;
+    peer *p = static_cast<peer*>(context);
     size_t n = size < 37 ? size : 37;
     if (n > sizeof(p->other->input) - p->other->used) return MBEDTLS_ERR_SSL_WANT_WRITE;
     memcpy(p->other->input + p->other->used, data, n);
@@ -52,7 +52,7 @@ static int send_fragment(void *context, const unsigned char *data, size_t size) 
     return (int)n;
 }
 static int receive_fragment(void *context, unsigned char *data, size_t size) {
-    peer *p = (peer *)context;
+    peer *p = static_cast<peer*>(context);
     size_t n = size < 29 ? size : 29;
     if (!p->used) return MBEDTLS_ERR_SSL_WANT_READ;
     if (n > p->used) n = p->used;

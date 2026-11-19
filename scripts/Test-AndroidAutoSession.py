@@ -142,7 +142,7 @@ static int endedAdd(int value) {
     session_path = "reference/src/aa_session.cpp"
     files[session_path] = harden_session(files[session_path].decode().replace("\r\n", "\n")).encode()
     prepare_audio_sources(files)
-    files["test_tls_memory.c"] = (ROOT / "src/android_auto/test_tls_memory.c").read_bytes()
+    files["test_tls_memory.cpp"] = (ROOT / "src/android_auto/test_tls_memory.cpp").read_bytes()
     files["test_session_protocol.cpp"] = (ROOT / "src/android_auto/test_session_protocol.cpp").read_bytes()
     for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'oneplus_aoa.c',
                  'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp', 'test_video_capture.cpp']:
@@ -151,7 +151,7 @@ static int endedAdd(int value) {
     libs = "lib/libmbedtls.a lib/libmbedx509.a lib/libmbedcrypto.a -lsocket -lm"
     commands = ["set -e", "export QNX_HOST=/usr/qnx650/host/qnx6/x86",
                 "export QNX_TARGET=/usr/qnx650/target/qnx6", 'export PATH="$QNX_HOST/usr/bin:$PATH"',
-                cxx + " -DNBT_TLS_BACKEND_TEST test_tls_memory.c reference/src/aa_cryptor.cpp " + libs + " -o test_backend",
+                cxx + " -DNBT_TLS_BACKEND_TEST test_tls_memory.cpp reference/src/aa_cryptor.cpp " + libs + " -o test_backend",
                 "./test_backend", "mkdir objects"]
     components = ["aa_session", "aa_cryptor", "audio/audio_acks", "sdr_builder", "crash_handler"]
     # browser audio mode, as in build-qnx.sh (objects named audio_<name>.o there and here)
