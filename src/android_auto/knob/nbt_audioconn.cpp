@@ -23,12 +23,15 @@
 // arbitrary car audio connections. NBT_AUDIOCONN_ANY=1 lifts that limit for investigation.
 //
 // State files in the runtime directory (RAM, gone after a reboot):
-//   audio-route.built    a build was granted and no remove has been granted since (native_service cleans up with it)
+//   audio-route.built    a build may have been sent and no remove has been granted since
 //   audio-route.failed   the last build was refused or not answered: native_service keeps Bluetooth audio for the next
 //                        sessions until the next reboot (or until the file is removed)
 // Needs no LD_LIBRARY_PATH: the DSI library is opened by absolute path (ref/dsi_client.cpp).
 #include "most/client.hpp"
 #include "most/connmaster.hpp"
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +42,10 @@
 namespace {
 
 namespace cm = nbt::most::connmaster;
-const char* const kRuntimeDir = "/fs/ram3/nbt-aa-native";
+#ifndef NBT_AUDIO_RUNTIME_DIR
+#define NBT_AUDIO_RUNTIME_DIR "/fs/ram3/nbt-aa-native"
+#endif
+const char* const kRuntimeDir = NBT_AUDIO_RUNTIME_DIR;
 const uint8_t kFBlockConnMaster = cm::kFBlock;
 const uint16_t kFktBuild = cm::kFktBuild, kFktRemove = cm::kFktRemove, kFktTable = cm::kFktTable;
 
@@ -53,7 +59,8 @@ long long nowMs() {
 }
 
 // ---- registry: where the ConnectionMaster lives ------------------------------------------------------------------
-volatile unsigned g_cmAddr = 0, g_cmInst = 0, g_regSeen = 0;
+pthread_mutex_t g_stateLock = PTHREAD_MUTEX_INITIALIZER;
+unsigned g_cmAddr = 0, g_cmInst = 0, g_regSeen = 0;
 void onInfo(uint32_t id, const uint8_t* p, uint32_t len, void*) {
     if (id != nbt::most::kAttrRegistry || len < 4) return;
     uint32_t n = nbt::most::rdLe32(p);
@@ -62,34 +69,41 @@ void onInfo(uint32_t id, const uint8_t* p, uint32_t len, void*) {
         unsigned a = nbt::most::rdLe16(p + 4 + i * 4), key = nbt::most::rdLe16(p + 6 + i * 4);
         if ((key >> 8) == kFBlockConnMaster && !addr) { addr = a; inst = key & 0xff; }
     }
+    pthread_mutex_lock(&g_stateLock);
     g_cmAddr = addr;
     g_cmInst = inst;
     g_regSeen = 1;
+    pthread_mutex_unlock(&g_stateLock);
 }
 
 // ---- replies from FBlock 03 to us --------------------------------------------------------------------------------
-volatile unsigned g_myDev = 0;
-volatile int g_wantFkt = -1, g_wantHandle = -1;
-volatile int g_result = 0;          // 0 waiting, 1 ResultAck, -1 error
+unsigned g_myDev = 0;
+int g_wantFkt = -1, g_wantHandle = -1;
+int g_result = 0;          // 0 waiting, 1 ResultAck, -1 error
 uint8_t g_errBytes[8];
-volatile unsigned g_errLen = 0;
+unsigned g_errLen = 0;
 bool g_list = false;
 
 void onMsg(const nbt::most::View& m, nbt::most::MsgClass, void*) {
     if (m.fblock != kFBlockConnMaster) return;
+    pthread_mutex_lock(&g_stateLock);
     if (g_list && m.fkt == kFktTable && m.op == 0xC) {
         printf("table status (%u bytes):", (unsigned)m.len);
         for (size_t i = 0; i < m.len && i < 200; ++i) printf("%s%02x", i % 5 ? " " : "  |", m.data[i]);
         printf("\n");
         if (!g_myDev || m.dst == g_myDev) g_result = 1;
+        pthread_mutex_unlock(&g_stateLock);
         return;
     }
-    if (g_myDev && m.dst != g_myDev) return;
-    if ((int)m.fkt != g_wantFkt) return;
+    if ((g_myDev && m.dst != g_myDev) || (int)m.fkt != g_wantFkt) {
+        pthread_mutex_unlock(&g_stateLock);
+        return;
+    }
     if (m.op == cm::kOpResultAck) {
         int h = cm::resultAckHandle(m.data, m.len);
-        if (g_wantHandle >= 0 && h >= 0 && h != g_wantHandle) {
+        if (g_wantHandle >= 0 && h != g_wantHandle) {
             printf("ResultAck for another handle 0x%04x (ours 0x%04x): ignored\n", (unsigned)h, (unsigned)g_wantHandle);
+            pthread_mutex_unlock(&g_stateLock);
             return;
         }
         g_result = 1;
@@ -100,16 +114,65 @@ void onMsg(const nbt::most::View& m, nbt::most::MsgClass, void*) {
     } else {
         printf("reply fkt=%03X op=%X len=%u (not final)\n", m.fkt, m.op, (unsigned)m.len);
     }
+    pthread_mutex_unlock(&g_stateLock);
 }
 
-void stateFile(const char* name, bool present, const char* text) {
+int result() {
+    pthread_mutex_lock(&g_stateLock);
+    int value = g_result;
+    pthread_mutex_unlock(&g_stateLock);
+    return value;
+}
+
+bool stateFile(const char* name, bool present, const char* text) {
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", kRuntimeDir, name);
-    if (!present) { unlink(path); return; }
-    FILE* f = fopen(path, "w");
-    if (!f) return;
-    fprintf(f, "%s\n", text);
+    if (!present) {
+        if (unlink(path) == 0 || errno == ENOENT) return true;
+        perror(path);
+        return false;
+    }
+    char tmp[128];
+    snprintf(tmp, sizeof(tmp), "%s.%ld.tmp", path, (long)getpid());
+    FILE* f = fopen(tmp, "w");
+    if (!f) { perror(tmp); return false; }
+    bool ok = fprintf(f, "%s\n", text) >= 0;
+    if (fclose(f) != 0) ok = false;
+    if (ok && rename(tmp, path) == 0) return true;
+    perror("audio route state");
+    unlink(tmp);
+    return false;
+}
+
+bool lockRoute() {
+    char path[96];
+    snprintf(path, sizeof(path), "%s/audio-route.lock", kRuntimeDir);
+    int fd = open(path, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) { perror(path); return false; }
+    struct flock lock;
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_SET;
+    if (fcntl(fd, F_SETLKW, &lock) == 0) return true;
+    perror("audio route lock");
+    close(fd);
+    return false;
+}
+
+bool compatiblePending(unsigned long conn) {
+    char path[96], line[32], *end;
+    snprintf(path, sizeof(path), "%s/audio-route.built", kRuntimeDir);
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        if (errno == ENOENT) return true;
+        perror(path);
+        return false;
+    }
+    bool ok = fgets(line, sizeof(line), f) != NULL;
     fclose(f);
+    if (!ok) return false;
+    unsigned long pending = strtoul(line, &end, 0);
+    return end != line && (*end == '\n' || *end == '\0') && pending == conn;
 }
 
 int usage(const char* me) {
@@ -137,47 +200,76 @@ int main(int argc, char** argv) {
     }
     g_list = op == 'l';
     signal(SIGTERM, onSignal); signal(SIGINT, onSignal); signal(SIGPIPE, SIG_IGN);
+    if (op != 'l' && !lockRoute()) {
+        if (op == 'b') stateFile("audio-route.failed", true, "cannot lock audio route");
+        return 4;
+    }
+    if (op == 'b' && !compatiblePending(conn)) {
+        fprintf(stderr, "a different or invalid pending audio route must be cleaned up first\n");
+        stateFile("audio-route.failed", true, "pending audio route");
+        return 4;
+    }
 
     static nbt::most::Client most;
     if (!most.setTap(&onMsg, NULL) || !most.setInfoTap(&onInfo, NULL)) return 4;
-    if (!most.start("NBTPROJ_AUDIOCONN")) return 4;
+    if (!most.start("NBTPROJ_AUDIOCONN")) {
+        if (op == 'b') stateFile("audio-route.failed", true, "MOST client could not start");
+        return 4;
+    }
     for (int w = 0; w < 50 && most.state() != nbt::most::kUp && !g_stop; ++w) usleep(100000);
     if (most.state() != nbt::most::kUp) {
         printf("MOST link not up: nothing sent\n");
         if (op == 'b') stateFile("audio-route.failed", true, "MOST link not up");
         fflush(stdout); _exit(4);
     }
-    for (int w = 0; w < 30 && !g_regSeen && !g_stop; ++w) usleep(100000);
-    if (!g_cmAddr) {
-        printf("ConnectionMaster FBlock 03 not in the MOST registry%s: nothing sent\n", g_regSeen ? "" : " (no registry)");
+    unsigned cmAddr = 0, cmInst = 0, regSeen = 0;
+    for (int w = 0; w < 30 && !g_stop; ++w) {
+        pthread_mutex_lock(&g_stateLock);
+        cmAddr = g_cmAddr; cmInst = g_cmInst; regSeen = g_regSeen;
+        pthread_mutex_unlock(&g_stateLock);
+        if (regSeen) break;
+        usleep(100000);
+    }
+    if (!cmAddr) {
+        printf("ConnectionMaster FBlock 03 not in the MOST registry%s: nothing sent\n", regSeen ? "" : " (no registry)");
         if (op == 'b') stateFile("audio-route.failed", true, "FBlock 03 not in registry");
         fflush(stdout); _exit(4);
     }
-    g_myDev = most.deviceId();
-    printf("ConnectionMaster 03/%02X at 0x%04X, own device 0x%04X\n", g_cmInst, g_cmAddr, g_myDev);
+    unsigned myDev = most.deviceId();
+    pthread_mutex_lock(&g_stateLock);
+    g_myDev = myDev;
+    if (op == 'l') g_wantFkt = kFktTable;
+    pthread_mutex_unlock(&g_stateLock);
+    printf("ConnectionMaster 03/%02X at 0x%04X, own device 0x%04X\n", cmInst, cmAddr, myDev);
 
     if (op == 'l') {
-        g_wantFkt = kFktTable;
-        most.send(cm::tableGet((uint16_t)g_cmAddr, (uint8_t)g_cmInst));
-        for (long long t = nowMs() + 2000; nowMs() < t && !g_result && !g_stop;) usleep(50000);
+        most.send(cm::tableGet((uint16_t)cmAddr, (uint8_t)cmInst));
+        for (long long t = nowMs() + 2000; nowMs() < t && !result() && !g_stop;) usleep(50000);
         fflush(stdout);
-        _exit(g_result ? 0 : 3);
+        _exit(result() ? 0 : 3);
     }
 
     const uint16_t fkt = op == 'b' ? kFktBuild : kFktRemove;
     const unsigned handle = 0x4E00u | (unsigned)(getpid() & 0xff);   // own range, away from the HMI's 0xB1xx / counters
+    pthread_mutex_lock(&g_stateLock);
     g_wantFkt = fkt;
     g_wantHandle = (int)handle;
+    pthread_mutex_unlock(&g_stateLock);
     printf("%s connection 0x%lx (fkt %03X, handle 0x%04X)\n", op == 'b' ? "build" : "remove", conn, fkt, handle);
-    if (!most.send(cm::connectionRequest(op == 'b', (uint16_t)g_cmAddr, (uint8_t)g_cmInst, (uint16_t)handle,
+    if (op == 'b' && !stateFile("audio-route.built", true, argv[2])) {
+        stateFile("audio-route.failed", true, "cannot record pending route");
+        fflush(stdout); _exit(4);
+    }
+    if (!most.send(cm::connectionRequest(op == 'b', (uint16_t)cmAddr, (uint8_t)cmInst, (uint16_t)handle,
                                          (uint16_t)conn))) {
         if (op == 'b') stateFile("audio-route.failed", true, "send failed");
         fflush(stdout); _exit(4);
     }
-    for (long long t = nowMs() + 3000; nowMs() < t && !g_result && !g_stop;) usleep(50000);
+    for (long long t = nowMs() + 3000; nowMs() < t && !result() && !g_stop;) usleep(50000);
 
     char why[64];
     int rc;
+    pthread_mutex_lock(&g_stateLock);
     if (g_result == 1) {
         printf("granted\n");
         rc = 0;
@@ -191,10 +283,11 @@ int main(int argc, char** argv) {
         printf("%s\n", why);
         rc = 3;
     }
+    pthread_mutex_unlock(&g_stateLock);
     if (op == 'b') {
-        if (rc == 0) { stateFile("audio-route.built", true, argv[2]); stateFile("audio-route.failed", false, 0); }
+        if (rc == 0) stateFile("audio-route.failed", false, 0);
         else stateFile("audio-route.failed", true, why);
-    } else if (rc == 0) {
+    } else if (rc == 0 && compatiblePending(conn)) {
         stateFile("audio-route.built", false, 0);
     }
     fflush(stdout);

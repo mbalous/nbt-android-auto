@@ -41,6 +41,12 @@ def apply_patches(files):
                 files["reference/" + path.relative_to(work / "milestone-7").as_posix()] = path.read_bytes()
 
 
+def prepare_audio_sources(files):
+    apply_patches(files)
+    for name in ("asound_device.cpp", "asound_device.hpp"):
+        files["reference/src/audio/" + name] = (ROOT / "src/android_auto/audio_a2i" / name).read_bytes()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--core-build", type=Path, required=True)
@@ -92,6 +98,11 @@ def main():
         raise RuntimeError("Reference revision mismatch")
     if run(["git", "-C", str(reference), "status", "--porcelain"]).strip():
         raise RuntimeError("Reference must remain clean")
+    for folder in ("src", "include"):
+        for path in (reference / "milestone-7" / folder).rglob("*"):
+            if path.is_file():
+                name = "reference/" + path.relative_to(reference / "milestone-7").as_posix()
+                files.setdefault(name, path.read_bytes().replace(b"\r\n", b"\n"))
     for name in ["src/crash_handler.cpp", "tests/test_session_lifecycle.cpp"]:
         files["reference/" + name] = (reference / "milestone-7" / name).read_bytes().replace(b"\r\n", b"\n")
     for path in sorted((reference / "milestone-7" / "third_party" / "speexdsp").glob("*")):
@@ -130,7 +141,7 @@ static int endedAdd(int value) {
     files["reference/src/aa_cryptor.cpp"] = (ROOT / "src/android_auto/aa_cryptor_mbedtls.cpp").read_bytes()
     session_path = "reference/src/aa_session.cpp"
     files[session_path] = harden_session(files[session_path].decode().replace("\r\n", "\n")).encode()
-    apply_patches(files)
+    prepare_audio_sources(files)
     files["test_tls_memory.c"] = (ROOT / "src/android_auto/test_tls_memory.c").read_bytes()
     files["test_session_protocol.cpp"] = (ROOT / "src/android_auto/test_session_protocol.cpp").read_bytes()
     for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'oneplus_aoa.c',

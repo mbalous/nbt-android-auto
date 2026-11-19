@@ -11,6 +11,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef NBT_AUDIO_RUNTIME_DIR
+#define NBT_AUDIO_RUNTIME_DIR "/fs/ram3/nbt-aa-native"
+#endif
+
 namespace nbt {
 
 namespace {
@@ -113,9 +117,14 @@ bool AsoundDevice::open() {
     while (buf & (buf - 1)) buf &= buf - 1;   // a power of two (liba2i check_parameter)
     if (packages < 1 || packages > 256) packages = 2;
     if (openWith(buf, packages)) return true;
-    if (buf == 1024 && packages == 2) return false;
-    printf("[Browser] trying the car-proven A2I setup: 1024-byte packages x2\n");
-    return openWith(1024, 2);
+    if (buf != 1024 || packages != 2) {
+        printf("[Browser] trying the car-proven A2I setup: 1024-byte packages x2\n");
+        if (openWith(1024, 2)) return true;
+    }
+    FILE* f = fopen(NBT_AUDIO_RUNTIME_DIR "/audio-output.failed", "w");
+    if (f) { fprintf(f, "A2I endpoint could not be opened\n"); fclose(f); }
+    else perror("[Browser] cannot record output failure");
+    return false;
 }
 
 bool AsoundDevice::openWith(uint32_t package_bytes, uint32_t packages) {

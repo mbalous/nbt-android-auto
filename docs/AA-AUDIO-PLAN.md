@@ -82,9 +82,10 @@ How it works
   the MOST registry; Fkt 0x053 / 0x054, StartResultAck, big-endian `{u16 handle, u16 connId}`), `-l` reads the connection
   table. Only 0xb8..0xba are accepted. Frame builder: `ref/most/connmaster.hpp`, test `knob/tests/test_connmaster.cpp`.
 - **Policy** (`native_service`, evaluated before every session): Android Auto sound with connection 0xb8, except
-  `bt-audio` in the package folder (user switch), `audio-route.failed` (the last build was refused or not answered, kept
-  in RAM until the next reboot) or a missing `audioconn` / `liba2i_client.so`, which means Bluetooth as before. After every
-  session `native_service` removes a route that is still built (`audio-route.built`), because 0xb8 interrupts the radio.
+  `bt-audio`, `audio-route.failed`, `audio-output.failed`, a pending route cleanup, or a missing `audioconn` /
+  `liba2i_client.so`, which means Bluetooth as before. Failures are kept in RAM until reboot. Before sending a build,
+  `audioconn` records its connection in `audio-route.built`; `native_service` retries removal after a session and while
+  idle until removal is confirmed, because an unanswered build may still interrupt the radio.
   `aa-audio` (optional) holds another connection id; `0` plays unrouted.
 
 Verified on a car (BMW F07 2014, original HU_NBT)
@@ -103,4 +104,4 @@ Not verified / open
 
 Rollback: `touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/bt-audio`, then restart the Android Auto service. If the radio stays
 muted: `/var/opt/hmi/data/rw/NbtAndroidAutoRT/audioconn -r 0xb8`. Logs: `capture-*.log` (`[AudioRoute]`, `[Browser]`),
-`audioconn-cleanup.log`, `audio-route.*` in `/fs/ram3/nbt-aa-native`.
+`audioconn-cleanup.log`, `audio-route.*` and `audio-output.failed` in `/fs/ram3/nbt-aa-native`.

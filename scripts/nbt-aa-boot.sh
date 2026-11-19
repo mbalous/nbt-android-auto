@@ -37,6 +37,10 @@ elif test ! -e /opt/sys/lib/liba2i_client.so -a ! -e $P/aa-audio; then
   echo 'audio: Bluetooth (no liba2i_client on this NBT)'
 elif test -e $R/audio-route.failed; then
   echo "audio: Bluetooth (route failed earlier: `sed 1q $R/audio-route.failed`)"
+elif test -e $R/audio-output.failed; then
+  echo "audio: Bluetooth (output failed earlier: `sed 1q $R/audio-output.failed`)"
+elif test -e $R/audio-route.built; then
+  echo 'audio: Bluetooth (route cleanup pending)'
 else
   echo "audio: Android Auto (`sed 1q $R/aa-audio 2>/dev/null || echo 0xb8`)"
 fi

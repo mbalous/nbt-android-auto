@@ -54,8 +54,9 @@ bool setup(nbt::AASession& session)
     if (!g_audio->init(cfg)) {
         printf("AA_AUDIO WARNING: A2I output (liba2i_client) not loaded: Android Auto audio will be silent\n");
         // native_service reads this before the next session and falls back to Bluetooth audio
-        FILE* f = fopen("/fs/ram3/nbt-aa-native/audio-route.failed", "w");
+        FILE* f = fopen("/fs/ram3/nbt-aa-native/audio-output.failed", "w");
         if (f) { fprintf(f, "A2I output not loaded\n"); fclose(f); }
+        else perror("AA_AUDIO cannot record output failure");
     }
     if (cfg.defer_acks) {
         g_audio->setConsumedCallback(on_consumed, &session);
@@ -80,8 +81,10 @@ void shutdown()
     if (!g_audio)
         return;
     g_audio->cancelPending();
+    g_audio->waitForRoute();
     g_audio->onSessionEnded();
     g_audio->stop();
+    g_audio->waitForRoute();
     delete g_audio;
     g_audio = 0;
     printf("AA_AUDIO stopped\n");

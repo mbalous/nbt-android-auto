@@ -68,11 +68,11 @@ static long long ms(void)
  * Bluetooth audio instead (media sink ch 9 not offered, the phone keeps playing over Bluetooth) when:
  *   bt-audio              the user's switch (boot.sh copies it from the package directory)
  *   audio-route.failed    nbt_audioconn's last build was refused / not answered (RAM: until the next reboot)
+ *   audio-output.failed   the output library or endpoint failed
+ *   audio-route.built     a previous route still needs cleanup
  *   no audioconn          nothing could route the sound, it would only be silent
  * aa-audio (optional, experiment): first line = another connection id; "0" plays unrouted (old behaviour).
  * Evaluated before every session, so a failed route falls back to Bluetooth from the next session on. */
-static unsigned long audio_conn; /* connection built for the current session, 0 = none (Bluetooth or unrouted) */
-
 static void set_audio_mode(void)
 {
     FILE* f;
@@ -81,11 +81,14 @@ static void set_audio_mode(void)
     unsigned long conn = 0xb8;
     int explicit_file = 0;
     const char* why = 0;
-    audio_conn = 0;
     if (!access("bt-audio", F_OK))
         why = "bt-audio switch";
     else if (!access("audio-route.failed", F_OK))
         why = "audio route failed earlier (audio-route.failed)";
+    else if (!access("audio-output.failed", F_OK))
+        why = "audio output failed earlier (audio-output.failed)";
+    else if (!access("audio-route.built", F_OK))
+        why = "audio route cleanup pending";
     f = why ? 0 : fopen("aa-audio", "r");
     if (f) {
         explicit_file = 1;
@@ -127,25 +130,42 @@ static void set_audio_mode(void)
     setenv("NBT_AUDIOCONN_RETRIES", "2", 1);
     if (conn) {
         setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
-        audio_conn = conn;
     } else
         unsetenv("NBT_AUDIOCONN");
 }
 
 /* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
  * oneplus_native ended without removing it (crash, kill, unplugged mid-song), remove it here. nbt_audioconn keeps
- * audio-route.built while a granted build has not been removed. */
+ * audio-route.built before sending a build, until a remove is granted. */
 static void audio_route_cleanup(void)
 {
     char cmd[160];
+    char line[32], *end;
+    unsigned long conn;
+    FILE* f;
+    static long long last_attempt = -15000;
     int r;
-    if (access("audio-route.built", F_OK) || access("audioconn", X_OK))
+    if (access("audio-route.built", F_OK) || access("audioconn", X_OK) || ms() - last_attempt < 15000)
         return;
+    last_attempt = ms();
+    f = fopen("audio-route.built", "r");
+    if (!f) { perror("audio-route.built"); return; }
+    if (!fgets(line, sizeof(line), f)) {
+        fprintf(stderr, "audio: invalid pending route file\n");
+        fclose(f);
+        return;
+    }
+    fclose(f);
+    conn = strtoul(line, &end, 0);
+    if (end == line || (*end != '\n' && *end != '\0') || !conn || conn > 0xffff) {
+        fprintf(stderr, "audio: invalid pending route file\n");
+        return;
+    }
     snprintf(cmd, sizeof(cmd), "./audioconn -r 0x%lx >> audioconn-cleanup.log 2>&1",
-             audio_conn ? audio_conn : 0xb8UL);
+             conn);
     r = system(cmd);
     if (r)
-        unlink("audio-route.built"); /* do not retry forever; the log keeps the answer */
+        fprintf(stderr, "audio: route cleanup failed (%d), will retry\n", r);
 }
 
 /* ---- child processes ------------------------------------------------------------------------------------------- */
@@ -624,6 +644,7 @@ int main(int argc, char** argv)
 
     /* ---- one Android Auto session per loop pass ---- */
     while (!stopping && alive(&lease)) {
+        audio_route_cleanup();
         /* Optional HMI gate (file gate.mode in the runtime directory): the phone is only touched after the Android Auto
          * page in the HMI was opened, which creates /fs/ram3/nbt-aa-request (see src/idrive/aa_entry_plugin.cpp). */
         if (gate && access(HMI_REQUEST_FILE, F_OK)) {
