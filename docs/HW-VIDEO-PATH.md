@@ -1,69 +1,74 @@
-# Hardware-Videoweg ohne Stick (Stand 7.11.2026)
+# Hardware video path without a USB stick (status 7 November 2026)
 
-## Warum
-Der WAL-Sprite-Weg (Bild als Textur hochladen) ist für Dauerbetrieb nicht tragfähig. Belege:
-- 7.11., drei Läufe:
-  - Lauf 1: ca. 60 s, dann Sitzungsende.
-  - Lauf 2: 800x300 bei ~9 fps, nach ~30 s Neustart.
-  - Lauf 3: 640x240 bei ≤6 fps, nach ~40 s Neustart.
-- Lauf 2 und 3 endeten jeweils mit `NVRM: PUSHER RESERVED CMD ERROR / Fifo: Parse Error` im NVIDIA-Treiber, direkt nach
-  `create sprite 31281`. Danach SIGSTOP an alle GPU-Prozesse, Watchdog, Neustart.
-  Belege: `build/aa-entry-20261106/dump-run2/`, `dump-run3/`.
-- In Lauf 3 tauchte der Treiber in der CPU-Messung nicht auf. Es liegt also nicht an der Last: Das wiederholte Ersetzen einer großen
-  Textur löst den Fehler früher oder später aus.
-- Zusätzlich kosten die Rohbild-Pipes ~28 % CPU (`pipe`), der Software-Decoder (io-nme) ~24 %.
+## Why
 
-## Wie die HMI ein Video einschaltet (MOST-Mitschnitt 7.11., Handy-MTP-Video)
-Mitschnitt: `build/video-trace-20261107/trace.log`, aufgezeichnet mit `nbt_knob --trace` (nur zuhören).
-Zeitpunkte passen zum Systemprotokoll (`slog-video.txt`: nvideocapture-Start 00:13:01 = t≈781, Stopp 00:13:33 = t≈813).
+The WAL sprite path (uploading the picture as a texture) is not viable for continuous operation. Evidence:
+- Three runs on 7 November:
+  - Run 1: about 60 s, then the session ended.
+  - Run 2: 800x300 at ~9 fps, reboot after ~30 s.
+  - Run 3: 640x240 at ≤6 fps, reboot after ~40 s.
+- Runs 2 and 3 both ended with `NVRM: PUSHER RESERVED CMD ERROR / Fifo: Parse Error` in the NVIDIA driver, immediately
+  after `create sprite 31281`. All GPU processes then received SIGSTOP, followed by the watchdog and reboot.
+  Evidence: `build/aa-entry-20261106/dump-run2/`, `dump-run3/`.
+- In run 3, the driver did not appear in the CPU measurements. Load is therefore not the cause: repeatedly replacing a
+  large texture triggers the error sooner or later.
+- Raw image pipes also use ~28% CPU (`pipe`), and the software decoder (io-nme) ~24%.
 
-Teilnehmer:
+## How the HMI starts video (MOST capture, 7 November, phone MTP video)
 
-| Adresse | Rolle |
+Capture: `build/video-trace-20261107/trace.log`, recorded with `nbt_knob --trace` (listen only).
+Times match the system log (`slog-video.txt`: nvideocapture start 00:13:01 = t≈781, stop 00:13:33 = t≈813).
+
+Participants:
+
+| Address | Role |
 |---|---|
 | 2021 | HMI |
-| 2008 | `VideoApp` mit FBlock **D7** (VideoConnectionMaster) |
-| 2007 | `VideoApp` mit FBlock **D8** (VideoSink CID) |
-| 2006 | FBlock 07/11, wird von VideoApp benachrichtigt |
+| 2008 | `VideoApp` with FBlock **D7** (VideoConnectionMaster) |
+| 2007 | `VideoApp` with FBlock **D8** (VideoSink CID) |
+| 2006 | FBlock 07/11, notified by VideoApp |
 
-Start (zweimal identisch beobachtet, t=738 und t=781):
+Start (observed twice identically, t=738 and t=781):
 ```
-2021->2008 D7/01 fkt=060 op=6 (StartResult)  03 aa 16 01     BuildVideoConnection(handle 0x03aa, Quelle 0x16, Senke 0x01)
-2008->2006 07/11 fkt=D62 op=0  06 00 00 00 00 00 00 nn        (VideoApp intern)
-2008->alle D7/01 fkt=062 op=C  00 00 16 00 00 00 00           Verbindungstabelle: Senke CID <- Quelle 0x16
+2021->2008 D7/01 fkt=060 op=6 (StartResult)  03 aa 16 01     BuildVideoConnection(handle 0x03aa, source 0x16, sink 0x01)
+2008->2006 07/11 fkt=D62 op=0  06 00 00 00 00 00 00 nn        (internal to VideoApp)
+2008->all D7/01 fkt=062 op=C  00 00 16 00 00 00 00           Connection table: sink CID <- source 0x16
 2008->2021 D7/01 fkt=060 op=D (ResultAck)  03 aa 16 01
 2021->2007 D8/01 fkt=C05 op=0 (Set)  16 00                    CurrentVideoSource = 0x16
-2021->2007 D8/01 fkt=C03 op=0 (Set)  00 00 00 00 07 80 04 38  VideoViewport (Quellbereich) 0,0,1920,1080 -> DisplayManager Src-size
-2021->2007 D8/01 fkt=C01 op=6 (StartResult)  03 aa           StartVideo -> dev-nvideocapture startet (800x480, 60 Hz)
-2007->2021 D8/01 fkt=301..304 op=C                            Helligkeit/Kontrast/Farbe/Tint
+2021->2007 D8/01 fkt=C03 op=0 (Set)  00 00 00 00 07 80 04 38  VideoViewport (source area) 0,0,1920,1080 -> DisplayManager Src-size
+2021->2007 D8/01 fkt=C01 op=6 (StartResult)  03 aa           StartVideo -> dev-nvideocapture starts (800x480, 60 Hz)
+2007->2021 D8/01 fkt=301..304 op=C                            Brightness/contrast/color/tint
 2007->2021 D8/01 fkt=C01 op=D  03 aa                          ResultAck
-2021->2007 D8/01 fkt=C04 op=0 (Set)  01 0e 00 8c 01 40 00 b4  ScreenViewPort 270,140,320,180 (Vorschau)
-2021->2007 D8/01 fkt=C04 op=0 (Set)  00 d5 00 00 03 55 01 e0  ScreenViewPort 213,0,853,480 (Vollbild 16:9)
+2021->2007 D8/01 fkt=C04 op=0 (Set)  01 0e 00 8c 01 40 00 b4  ScreenViewPort 270,140,320,180 (preview)
+2021->2007 D8/01 fkt=C04 op=0 (Set)  00 d5 00 00 03 55 01 e0  ScreenViewPort 213,0,853,480 (full screen 16:9)
 ```
-Stopp (t=762 und t=813):
+Stop (t=762 and t=813):
 ```
 2021->2007 D8/01 fkt=C02 op=6  35 1d          StopVideo
-2021->2008 D7/01 fkt=061 op=6  35 1d 16 01    RemoveVideoConnection(Quelle 0x16, Senke 0x01)
-2021->2007 D8/01 fkt=C05 op=0  00 00          CurrentVideoSource = keine
+2021->2008 D7/01 fkt=061 op=6  35 1d 16 01    RemoveVideoConnection(source 0x16, sink 0x01)
+2021->2007 D8/01 fkt=C05 op=0  00 00          CurrentVideoSource = none
 ```
-Quelle 0x16 ist der Multimedia-Player (Cinemo Ausgang 1, Fenster `CinemoVideo1_TaskA/B`). VideoApp setzt daraufhin selbst
-Src-pos/Src-size/Visibility beim DisplayManager, startet die NVIDIA-Aufnahme und stellt die WAL-Videoebene ein
+Source 0x16 is the multimedia player (Cinemo output 1, windows `CinemoVideo1_TaskA/B`). VideoApp then sets
+Src-pos/Src-size/Visibility on DisplayManager, starts NVIDIA capture and configures the WAL video layer
 (`CPVideoSinkWALController`, `WalHmiInterface::setViewport`).
 
-## Plan für Android Auto
-1. Unser Decoder läuft weiter über io-nme, aber mit der Stock-Ausgabe: `NmeCmdLine -vd NmeDeviceScreen -vi
-   "?video-output-id=1&...&video-window-class=CinemoVideo1_TaskA,CinemoVideo1_TaskB"`. Das wurde schon gestern getestet (21 fps
-   dekodiert, Fenster angelegt). Damit entfallen YUV-Pipe, RGBA-Wandlung und Sprite-Uploads.
-2. Ein neues Werkzeug `nbt_video_route` (DSI-Client wie nbt_knob) sendet die Startfolge oben. Quellbereich 0,0,800,300 (unser
-   AA-Inhalt), ScreenViewPort 0,0,1280,480 (Vollbild, Faktor 1,6 in beiden Richtungen). Zum Beenden sendet es die Stoppfolge.
-3. Liegt die HMI-Ebene über der Videoebene, die Reihenfolge per `WalHmiInterface::setZOrder` umdrehen, oder die AA-Seite
-   (Halteseite 13) mit transparentem Inhalt gestalten.
+## Plan for Android Auto
 
-## Offene Punkte vor dem ersten Sendetest
-- Sendeformat von DSI-Anfrage 0x2 (`processMessage`): `u32 clientId` + MessageType. Unklar sind Übertragungsart und Variante
-  (empfangen: tx=0, var=2/0) und die Absenderadresse (eigene deviceId 0x206x oder die der HMI). Das wird aus HmiMain3D bzw.
-  libimp_sys_most_base_nbt.so.11 abgeleitet.
-- Reaktion der HMI auf eine fremde Verbindung mit Quelle 0x16: Der Multimedia-Player hält die Quelle eventuell für seine eigene.
-  Möglicherweise wäre eine andere, ungenutzte Quellen-ID besser.
-- Risiko: Falsche Nachrichten an VideoApp können die Videokette stören. Ein Neustart ist möglich, aber kein Datenverlust.
-  Jeder Sendetest nur mit Freigabe.
+1. Keep the decoder on io-nme but use the stock output: `NmeCmdLine -vd NmeDeviceScreen -vi
+   "?video-output-id=1&...&video-window-class=CinemoVideo1_TaskA,CinemoVideo1_TaskB"`. This was tested yesterday
+   (21 fps decoded, window created). It eliminates the YUV pipe, RGBA conversion and sprite uploads.
+2. A new `nbt_video_route` tool (DSI client like nbt_knob) sends the start sequence above. Source area 0,0,800,300 (our
+   AA content), ScreenViewPort 0,0,1280,480 (full screen, factor 1.6 in both directions). It sends the stop sequence
+   when finished.
+3. If the HMI layer is above the video layer, reverse their order with `WalHmiInterface::setZOrder` or give the AA page
+   (holding page 13) transparent content.
+
+## Open questions before the first transmission test
+
+- DSI request 0x2 (`processMessage`) format: `u32 clientId` + MessageType. Transmission type and variant
+  (received: tx=0, var=2/0), and sender address (own deviceId 0x206x or the HMI's), are unclear. Derive these from
+  HmiMain3D or libimp_sys_most_base_nbt.so.11.
+- HMI response to another connection using source 0x16: the multimedia player may treat the source as its own.
+  Another unused source ID might be preferable.
+- Risk: incorrect messages to VideoApp can disrupt the video chain. A reboot is possible, but no data loss. Obtain
+  approval before each transmission test.

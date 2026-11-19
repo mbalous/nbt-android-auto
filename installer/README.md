@@ -1,80 +1,77 @@
 # NBT Android Auto Installer
 
-Installiert Android Auto auf einem originalen BMW NBT (QNX). Danach gibt es unter **Multimedia** den Eintrag
-**Android Auto**. Der Installer braucht nur SSH-Zugang zum NBT: IP-Adresse und root-Passwort.
-Das Passwort wird nirgends gespeichert.
+Installs Android Auto on an original BMW NBT (QNX), adding an **Android Auto** entry under **Multimedia**. The installer
+needs SSH access to the NBT: its IP address and root password. The password is not stored.
 
-## Vorher: SSH-Zugang freischalten
+## Before installation: enable SSH access
 
-Ab Werk nimmt das NBT keine SSH-Anmeldung an. SSH muss deshalb zuerst einmal gepatcht werden.
+The stock NBT does not accept SSH logins, so SSH must first be unlocked.
 
-- **So hat es der Entwickler gemacht:** mit dem **FeatureInstaller**.
-  - Das braucht teils **mehrere Anläufe**.
-  - Der letzte Schritt meldet teils **Fehler, obwohl SSH geklappt hat**. Deshalb danach einfach die Verbindung testen,
-    z. B. `ssh root@169.254.199.99`.
-- **Root-Passwort:** steht in diesem Forum-Thread:
-  [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
-  Der Thread dreht sich um das NBT Evo im Toyota Supra, das root-Passwort steht dort.
+- **How the developer did it:** with **FeatureInstaller**. This can take **several attempts**, and the last step may
+  report **errors even when SSH was enabled**. Check the connection afterwards, for example with
+  `ssh root@169.254.199.99`.
+- **Root password:** see the [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
+  The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
 
-Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschieht es auf eigene Gefahr.
+Enabling SSH changes the device configuration. As with everything here, you do it at your own risk.
 
-## Benutzung
+## Usage
 
-1. Laptop per ENET-Kabel mit dem Auto verbinden, Zündung an. Die übliche NBT-Adresse ist `169.254.199.99`.
-2. Installer starten:
+1. Connect the laptop to the car with an ENET cable and switch on the ignition. The usual NBT address is `169.254.199.99`.
+2. Start the installer:
    - Windows: `NBT-AndroidAuto-Installer.exe`
-   - macOS: `NBT-AndroidAuto-Installer.app`. Beim ersten Start mit Rechtsklick → Öffnen, weil die App nicht signiert ist.
-3. IP-Adresse und Passwort eingeben, dann **Installieren / Aktualisieren** klicken.
-4. Das iDrive neu starten.
-5. Telefon per USB anstecken und **Multimedia → Android Auto** wählen.
+   - macOS: `NBT-AndroidAuto-Installer.app`. On first use, right-click and choose Open because the app is unsigned.
+3. Enter the IP address and password, then click **Install / Update**.
+4. Restart iDrive.
+5. Connect the phone over USB and select **Multimedia → Android Auto**.
 
-## Was Android Auto auf dem NBT kann
+## Android Auto features on the NBT
 
-- **Bildmodus** auf der Android-Auto-Seite:
-  - **Breitbild** (Standard) nutzt die ganze Breite.
-  - **16:9** ist schärfer, rechts daneben bleibt der iDrive-Split-Screen sichtbar.
+- **Picture mode** on the Android Auto page:
+  - **Widescreen** (default) uses the full width.
+  - **16:9** is sharper and leaves the iDrive split screen visible on the right.
 
-  Der Wechsel gilt ab der nächsten Verbindung des Telefons.
-- **Bedienung** mit dem iDrive-Controller (drehen, drücken, kippen, BACK).
-- **Navigation im Tacho** (6WB-Kombiinstrument), solange Google Maps eine Route führt:
-  - Pfeil, Entfernung mit Balken und Straße,
-  - Autobahn- und Bundesstraßenschild,
-  - Fahrspuren.
+  Changes take effect the next time the phone connects.
+- **Control** with the iDrive controller (turn, press, tilt, BACK).
+- **Instrument-cluster navigation** (6WB) while Google Maps guides a route:
+  - Arrow, distance bar and street name.
+  - Motorway and road shields.
+  - Lanes.
 
-  Sobald die BMW-Navigation selbst führt, hat sie Vorrang.
-- **Android Auto neu starten** (Knopf auf der Android-Auto-Seite) startet nur den Android-Auto-Dienst neu, nicht das
-  NBT. Vorher wird ein Diagnose-Schnappschuss gespeichert. Den holt **Diagnose-Logs speichern** mit ab.
+  BMW navigation takes priority when it is guiding a route.
+- **Restart Android Auto** on the Android Auto page restarts only the Android Auto service, not the NBT. It first saves
+  a diagnostic snapshot, which **Save diagnostic logs** includes.
 
-Im **Breitbild**-Modus empfiehlt es sich, in iDrive den Split-Screen auszuschalten (OPTION → Split-Screen aus). Sonst
-öffnet zweimal schnell nach rechts kippen das Seitenfenster.
+In **Widescreen** mode, switch off the iDrive split screen (OPTION → split screen off). Otherwise, tilting right twice
+quickly opens the side panel.
 
-**Deinstallieren** entfernt genau die beiden installierten Ordner. **Diagnose-Logs speichern** lädt die Protokolle als
-ZIP herunter, z. B. für Fehlermeldungen.
+**Uninstall** removes exactly the two installed folders. **Save diagnostic logs** downloads the logs as a ZIP, for
+example to attach to a bug report.
 
-## Was auf das NBT geschrieben wird
+## Files written to the NBT
 
-| Ort | Inhalt |
+| Location | Content |
 |---|---|
-| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Dienst, Tacho-Navigation, Zertifikate, `boot.sh`, `restart.sh`, `vid.dpi`, `logs/`, `snapshots/` |
-| `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/` | iDrive-Plugin (Menüeintrag) |
+| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Service, cluster navigation, certificates, `boot.sh`, `restart.sh`, `vid.dpi`, `logs/`, `snapshots/` |
+| `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/` | iDrive plugin (menu entry) |
 
-Jede Datei wird erst als `.tmp` geschrieben, zurückgelesen und Byte für Byte verglichen und erst dann umbenannt. Weitere
-Systemdateien werden nicht verändert.
+Each file is first written as `.tmp`, read back and compared byte for byte, and only then renamed. No other system
+files are changed.
 
-## Ohne fertige App (Windows, macOS, Linux)
+## Without a packaged app (Windows, macOS, Linux)
 
 ```
-pip3 install "paramiko>=3.4,<4"   # paramiko 4+ kann das alte ssh-rsa des NBT nicht mehr
-python3 nbt_aa_installer.py                  # Fenster
-python3 nbt_aa_installer.py --cli install    # Terminal
+pip3 install "paramiko>=3.4,<4"   # paramiko 4+ no longer supports the NBT's old ssh-rsa
+python3 nbt_aa_installer.py                  # window
+python3 nbt_aa_installer.py --cli install    # terminal
 ```
 
-Der Ordner `payload/` muss neben dem Skript liegen.
+The `payload/` folder must be next to the script.
 
-## Für Entwickler
+## For developers
 
-- `python installer/make_payload.py [version]` sammelt die am Auto getesteten Build-Dateien in `installer/payload/`.
-  Die Datei `manifest.json` enthält SHA-256 je Datei. Der Ordner wird nicht eingecheckt.
-- `installer/build_windows.ps1` baut die Windows-.exe. `installer/build_mac.sh` baut die App auf einem Mac.
-- Für Tests in einer QNX-VM gibt es versteckte Optionen: `--key <ssh-key>` und `--root <testverzeichnis>`. Damit wird
-  unterhalb eines Testordners installiert statt im System.
+- `python installer/make_payload.py [version]` collects the car-tested build files in `installer/payload/`.
+  `manifest.json` contains the SHA-256 for each file. The folder is not checked in.
+- `installer/build_windows.ps1` builds the Windows executable. `installer/build_mac.sh` builds the app on a Mac.
+- For testing in a QNX VM, the hidden `--key <ssh-key>` and `--root <test-directory>` options install under a test
+  directory instead of the system paths.
