@@ -1,40 +1,42 @@
-# Android-Auto-Ton ohne Bluetooth – Stand 7.11.2026
+# Android Auto audio without Bluetooth – status 7 November 2026
 
-## Befunde
-- **Pieptest über A2I** (`nbt_a2i_beep`, Quelle und Skripte in `experiments/audio/`):
-  - In `input_stereo_1` bis `_5` wurde geschrieben, aber nichts war hörbar.
-  - `input_stereo_0` blieb beim Öffnen hängen, weil er belegt ist (BT/Media).
-  - Ergebnis: Ein Eingang ist nur hörbar, wenn die zugehörige Quelle beim Audio-Management aktiv ist.
-- **Cinemo `NmeCmdLine`** spielt keine WAV-Dateien ab (0 Samples, auch mit `-n`).
-- **Audio-Architektur des NBT:**
-  - Der Verstärker / ConnectionMaster ist extern: FBlock **03** unter Adresse **0x100E**.
-  - Die HMI baut dort Verbindungen auf (`CPxyConnectionMaster::BuildHighSyncConnection`, `RemoveHighSyncConnection`).
-  - Die Antworten an die HMI sind fkt **053** op=D (ResultAck `00 02`, `00 03`, …) und Status fkt **C03** (Verbindungstabelle,
-    z. B. `00 00 00 01 00`, `00 00 00 be 00`).
-  - Die Anfrage selbst ist im Mitschnitt nicht zu sehen, weil sie an ein externes Gerät geht.
-  - Belege: `build/audio-trace-20261107/atrace.log` (Quellwechsel per MODE-Taste: FBlock 15/02 fkt 513) und
+## Findings
+
+- **A2I beep test** (`nbt_a2i_beep`, sources and scripts in `experiments/audio/`):
+  - Data was written to `input_stereo_1` through `_5`, but nothing was audible.
+  - Opening `input_stereo_0` hung because it was in use (BT/media).
+  - An input is audible only when its associated source is active in audio management.
+- **Cinemo `NmeCmdLine`** does not play WAV files (0 samples, including with `-n`).
+- **NBT audio architecture:**
+  - The amplifier / ConnectionMaster is external: FBlock **03** at address **0x100E**.
+  - The HMI builds connections there (`CPxyConnectionMaster::BuildHighSyncConnection`, `RemoveHighSyncConnection`).
+  - Replies to the HMI use fkt **053** op=D (ResultAck `00 02`, `00 03`, …) and status fkt **C03** (connection table,
+    e.g. `00 00 00 01 00`, `00 00 00 be 00`).
+  - The request itself is not visible in the capture because it goes to an external device.
+  - Evidence: `build/audio-trace-20261107/atrace.log` (source changes using MODE: FBlock 15/02 fkt 513) and
     `build/video-trace-20261107/trace.log`.
-- **Browser-Audio wie in der Referenz (NBT Evo):**
-  - `/opt/sys/bin/dev-libasound -x input_stereo_3` (Connectivity.cfg) und der Treiber `/opt/mm/lib/libasound/libasound.so` sind
-    vorhanden, ebenso das Paket `CONN_BROWSER_AUDIO`.
-  - `audioconn` fehlt auf diesem NBT.
-  - HMI-Strings: `CPxyBrowser::CSourceActivity`, `EBrowserAudioSourceType`, `getConnIDForAudioSource`.
-- **Telefonie** läuft über das TCB (`devu-cdc_tcm-io_amp`, `play_dev=/input_mono_3`). **Bluetooth-A2DP** (Media → Bluetooth)
-  funktioniert grundsätzlich, beim OnePlus aber unzuverlässig.
+- **Browser audio as in the reference (NBT Evo):**
+  - `/opt/sys/bin/dev-libasound -x input_stereo_3` (Connectivity.cfg), the driver `/opt/mm/lib/libasound/libasound.so`
+    and the `CONN_BROWSER_AUDIO` package are present.
+  - `audioconn` is missing on this NBT.
+  - HMI strings: `CPxyBrowser::CSourceActivity`, `EBrowserAudioSourceType`, `getConnIDForAudioSource`.
+- **Telephony** uses the TCB (`devu-cdc_tcm-io_amp`, `play_dev=/input_mono_3`). **Bluetooth A2DP** (Media → Bluetooth)
+  works in principle, but unreliably with the OnePlus.
 
 ## Plan
+
 1. **Offline:**
-   - Den Serialisierer von `CPxyConnectionMaster::CBuildHighSyncConnection` in HmiMain3D lesen: Funktions-ID (vermutlich 053),
-     Nutzdaten (Handle, Verbindungs-ID, Senke).
-   - Die Verbindungs-ID der Browser-Quelle bestimmen (Referenz: 0xb8; die Tabelle `EAudioConnectionIDs` in HmiMain3D).
-2. **AA-Seite:**
-   - `NBT_SDR_DROP` ohne Kanal 9 (Media-Senke), Kanal 8 (Ansagen) behalten.
-   - PCM aus `setAudioFrameCallback` in einen Ringpuffer.
-3. **Ausgabe:**
-   - PCM über `libasound.so` (`snd_pcm_open_preferred`, 16 Bit Stereo, 44,1 kHz laut Referenz; Resampler 48 → 44,1 kHz aus der
-     Referenz) in `input_stereo_3`.
+   - Inspect the `CPxyConnectionMaster::CBuildHighSyncConnection` serializer in HmiMain3D: function ID (probably 053)
+     and payload (handle, connection ID, sink).
+   - Identify the browser source's connection ID (reference: 0xb8; the `EAudioConnectionIDs` table in HmiMain3D).
+2. **Android Auto:**
+   - Remove channel 9 (media sink) from `NBT_SDR_DROP`; retain channel 8 (guidance).
+   - Put PCM from `setAudioFrameCallback` into a ring buffer.
+3. **Output:**
+   - Send PCM through `libasound.so` (`snd_pcm_open_preferred`, 16-bit stereo, 44.1 kHz according to the reference;
+     reference resampler 48 → 44.1 kHz) to `input_stereo_3`.
 4. **Route:**
-   - Beim ersten Ton `BuildHighSyncConnection(Browser-ID)` an 0x100E, nach Stille `Remove`. Das läuft über die Sendefunktion
-     von nbt_knob/nbt_hwvideo (`Client::send`).
-5. **Am Auto testen** mit dem Pieptest über libasound und gebauter Verbindung, danach mit AA-Musik. Jeder Sendetest nur mit
-   Freigabe.
+   - On the first sound, send `BuildHighSyncConnection(browser ID)` to 0x100E; send `Remove` after silence. Use the
+     nbt_knob/nbt_hwvideo send function (`Client::send`).
+5. **Test in the car** with the libasound beep test and a built connection, then with Android Auto music. Obtain approval
+   before each transmission test.
