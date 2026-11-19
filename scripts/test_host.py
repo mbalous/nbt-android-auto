@@ -39,12 +39,14 @@ def main():
             + png_chunk(b"IEND", b"")
         )
         tests = [
-            ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")]),
-            ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)]),
+            ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")], []),
+            ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
+            ("src/android_auto/tests/test_video_capture_output.cpp", [],
+             ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
         ]
-        for source, arguments in tests:
+        for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
-            subprocess.run([os.environ.get("CXX", "g++"), *flags, str(ROOT / source),
+            subprocess.run([os.environ.get("CXX", "g++"), *flags, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)
 
