@@ -42,7 +42,7 @@ Helper scripts for a Windows host:
 - `scripts/Initialize-QnxTrust.ps1 -VerifiedFingerprint 'MD5:...'` pins the VM host key after you compared it on the
   VM console (`ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub`).
 - `scripts/Connect-QnxBootstrap.ps1` installs your public key for the build user (password typed by you, not stored).
-- `scripts/Invoke-QnxBuild.ps1 -Action Probe` checks the toolchain; `build.cmd` builds and runs `src/hello_nbt.c` as a
+- `scripts/Invoke-QnxBuild.ps1 -Action Probe` checks the toolchain; `build.cmd` builds and runs `src/hello_nbt.cpp` as a
   smoke test.
 
 The old QNX OpenSSH 5.2 needs `HostKeyAlgorithms +ssh-rsa` and `MACs +hmac-sha1` (only for this host).

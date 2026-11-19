@@ -47,7 +47,7 @@ if ($Action -eq 'Probe') {
 }
 $run = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $remoteDir = '.nbt-build/' + $run
-$source = [IO.File]::ReadAllText((Join-Path $root 'src/hello_nbt.c')).Replace("`r", '')
+$source = [IO.File]::ReadAllText((Join-Path $root 'src/hello_nbt.cpp')).Replace("`r", '')
 $delimiter = 'NBT_SOURCE_' + [Guid]::NewGuid().ToString('N')
 $script = $probe + "`n" + @"
 umask 077
@@ -55,10 +55,10 @@ cd "`$HOME"
 mkdir -p .nbt-build
 mkdir '$remoteDir'
 cd '$remoteDir'
-cat > hello_nbt.c <<'$delimiter'
+cat > hello_nbt.cpp <<'$delimiter'
 $source
 $delimiter
-qcc -V4.4.2,gcc_ntox86 -O2 -Wall -Wextra hello_nbt.c -o hello_nbt
+qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O2 -Wall -Wextra hello_nbt.cpp -o hello_nbt
 ./hello_nbt
 printf 'NBT_VM_TEST_OK\n'
 "@
@@ -81,9 +81,9 @@ if ($elf.Length -lt 52 -or $elf[0] -ne 127 -or $elf[1] -ne 69 -or $elf[2] -ne 76
 }
 $record = [ordered]@{
     builtUtc = [DateTime]::UtcNow.ToString('o')
-    sourceSha256 = (Get-Sha256Hex (Join-Path $root 'src/hello_nbt.c'))
+    sourceSha256 = (Get-Sha256Hex (Join-Path $root 'src/hello_nbt.cpp'))
     binarySha256 = (Get-Sha256Hex $binary)
-    compilerTarget = '4.4.2,gcc_ntox86'
+    compilerTarget = '4.4.2,gcc_ntox86_cpp'
     vmTestPassed = $true
     nbtTestPassed = $false
     remoteDirectory = $remoteDir

@@ -13,11 +13,10 @@ struct plugin_info {
 int main(int argc, char **argv)
 {
     void *handle;
-    struct plugin_info *info;
-    if ((argc != 2 && argc != 3) || sizeof(struct plugin_info) != 20) return 2;
+    if ((argc != 2 && argc != 3) || sizeof(plugin_info) != 20) return 2;
     handle = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 3; }
-    info = (struct plugin_info *)dlsym(handle, "pluginAppInfo");
+    const plugin_info* info = static_cast<const plugin_info*>(dlsym(handle, "pluginAppInfo"));
     if (!info || info->major != 1 || info->minor != 0 ||
         !info->name || strcmp(info->name, argc == 3 ? argv[2] : "HelloNbt") ||
         !info->vendor || strcmp(info->vendor, "NBT-Project") ||
