@@ -9,8 +9,6 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
 
-🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
-
 ## Features
 
 - **Android Auto over USB**: any Android phone, no phone-specific configuration.
@@ -148,26 +146,3 @@ damage to your car, head unit, phone or anything else, or for warranty claims yo
 experiments crashed and restarted the head unit; the published package avoids those paths, but it has been tested on
 one car only. Do not operate the phone or the system while driving in a way that distracts you; follow your local
 traffic laws.
-
----
-
-## Deutsch
-
-**NBT Android Auto** bringt kabelgebundenes Android Auto auf das **originale BMW NBT** (QNX, x86), ohne Zusatzhardware:
-Vollbild über den Hardware-Videoweg, Bedienung mit dem iDrive-Controller, Google-Maps-Abbiegehinweise im Tacho.
-So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/DfkW1wYsB__/).
-
-- **Voraussetzungen:** originales NBT (kein NBT Evo), SSH-Root-Zugang mit Passwort, ENET-Kabel.
-- **SSH freischalten:** SSH muss zuerst einmal gepatcht werden. Beim Entwickler ging das mit dem **FeatureInstaller**.
-  Das braucht teils mehrere Anläufe, und der letzte Schritt meldet teils Fehler, obwohl SSH geklappt hat. Also einfach
-  die Verbindung testen. Das root-Passwort steht in diesem
-  [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
-- **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
-  [installer/README.md](installer/README.md) folgen.
-- **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
-  (F07, 2014) und einem Telefon.
-- **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
-- Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
-  oder Englisch.
-- **Spenden und Kontakt:** Wer das Projekt unterstützen möchte, kann gern per **PayPal** an
-  **androidauto.nbt@proton.me** spenden. Über dieselbe Adresse erreichst du mich auch bei Fragen oder Vorschlägen.
