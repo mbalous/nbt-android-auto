@@ -377,7 +377,7 @@ struct Capture {
     int data;        // capture file or live FIFO
     int index;       // capture mode: .csv index
     int error;
-    size_t bytes;
+    uint64_t bytes;  // unpadded input bytes in live mode, bytes written in diagnostic mode
     unsigned frames, configs, frame_limit;
     bool live;
     LiveQueue queue;
@@ -491,17 +491,21 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
         const bool annexb = n >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1));
         if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes))
             c->error = 1;
-        else if (c->live)
-            live_enqueue(c, p, n, config);
         else {
-            bool written = write_all(c->data, p, n);
-            if (written && c->index >= 0) {
-                char row[160];
-                int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
-                                 (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
-                written = k > 0 && (size_t)k < sizeof(row) && write_all(c->index, (const unsigned char*)row, k);
+            bool accepted = true;
+            if (c->live) {
+                // Count valid input even when backpressure drops it; queue drops are logged separately.
+                live_enqueue(c, p, n, config);
+            } else {
+                accepted = write_all(c->data, p, n);
+                if (accepted && c->index >= 0) {
+                    char row[160];
+                    int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
+                                     (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
+                    accepted = k > 0 && (size_t)k < sizeof(row) && write_all(c->index, (const unsigned char*)row, k);
+                }
             }
-            if (!written)
+            if (!accepted)
                 c->error = 1;
             else {
                 c->bytes += n;
@@ -676,7 +680,7 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
 //
 // transfer: USB bulk transfer callback (direction 0 = to the phone, 1 = from the phone); context: its transport.
 // prefix:   capture mode file prefix (must be under /fs/ram3/nbt-aa- when running as root).
-// Returns 0 = session produced video, 2 = bad arguments / files, 3 = session failed.
+// Returns 0 = session received valid config and video without a capture error, 2 = bad arguments / files, 3 = failure.
 extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* context, const char* prefix)
 {
     if (!transfer || !prefix || !*prefix || strlen(prefix) > 200)
@@ -886,7 +890,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     close(c.socket);
     close(c.data);
     close(c.index);
-    printf("AA_VIDEO_CAPTURE_END frames=%u configs=%u bytes=%u invalid=%d no_display=1\n", c.frames, c.configs,
-           (unsigned)c.bytes, c.error);
+    printf("AA_VIDEO_CAPTURE_END frames=%u configs=%u bytes=%llu invalid=%d no_display=1\n", c.frames, c.configs,
+           (unsigned long long)c.bytes, c.error);
     return !c.error && c.frames && c.configs ? 0 : 3;
 }
