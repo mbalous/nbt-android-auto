@@ -17,8 +17,9 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 1. **Android Auto audio** now runs over USB (see [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md)). Still open:
    testing on other cars, NBT software levels and phones, the microphone uplink (calls still use Bluetooth) and
    buffer / latency tuning.
-2. **Build automation.** `scripts/build_all.py` builds everything in the VM (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md));
-   a GitHub Actions job that at least builds the installer from a release payload would still help.
+2. **Build automation.** `scripts/build_all.py` builds everything in the VM; CI runs host tests (see
+   [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#continuous-integration)). An installer build from a release payload
+   would still help.
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).
 4. **Latency**: the Cinemo HTTP buffer adds controller delay. Hardware decoding (`-wd 1`) was tried and made it worse
    (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.c`.
