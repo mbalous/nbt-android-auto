@@ -20,6 +20,8 @@
  *   center800   phone canvas 800x480 1:1 in the middle of the display      split800  same, at the left edge
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
+ *   bt-audio    Bluetooth sound instead of the default Android Auto sound (see set_audio_mode)
+ *   aa-audio    optional: another ConnectionMaster connection for the Android Auto sound (experiment)
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *
@@ -57,6 +59,113 @@ static long long ms(void)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+/* Android Auto audio (docs/AA-AUDIO-PLAN.md). On by default: the phone sends media, guidance
+ * and system audio over Android Auto, oneplus_native plays it through the car's browser audio front end (NBT-AAD browser
+ * mode, A2I input_stereo_3), and audioconn (= nbt_audioconn) asks the car's ConnectionMaster for connection 0xb8 so the
+ * speakers play it (car-verified on a BMW F07 2014 with the original HU_NBT).
+ * Bluetooth audio instead (media sink ch 9 not offered, the phone keeps playing over Bluetooth) when:
+ *   bt-audio              the user's switch (boot.sh copies it from the package directory)
+ *   audio-route.failed    nbt_audioconn's last build was refused / not answered (RAM: until the next reboot)
+ *   audio-output.failed   the output library or endpoint failed
+ *   audio-route.built     a previous route still needs cleanup
+ *   no audioconn          nothing could route the sound, it would only be silent
+ * aa-audio (optional, experiment): first line = another connection id; "0" plays unrouted (old behaviour).
+ * Evaluated before every session, so a failed route falls back to Bluetooth from the next session on. */
+static void set_audio_mode(void)
+{
+    FILE* f;
+    char line[32] = "";
+    char* end = 0;
+    unsigned long conn = 0xb8;
+    int explicit_file = 0;
+    const char* why = 0;
+    if (!access("bt-audio", F_OK))
+        why = "bt-audio switch";
+    else if (!access("audio-route.failed", F_OK))
+        why = "audio route failed earlier (audio-route.failed)";
+    else if (!access("audio-output.failed", F_OK))
+        why = "audio output failed earlier (audio-output.failed)";
+    else if (!access("audio-route.built", F_OK))
+        why = "audio route cleanup pending";
+    f = why ? 0 : fopen("aa-audio", "r");
+    if (f) {
+        explicit_file = 1;
+        if (fgets(line, sizeof(line), f)) {
+            char* p = line;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (*p && *p != '\n' && *p != '\r') {
+                unsigned long v = strtoul(p, &end, 0);
+                if (end != p && v <= 0xffff && (!*end || *end == '\n' || *end == '\r'))
+                    conn = v;
+            }
+        }
+        fclose(f);
+    }
+    /* BrowserAudio's output device is A2I input_stereo_3 through liba2i_client (src/android_auto/audio_a2i; the original
+     * HU_NBT has no libasound). Car-verified: connection 0xb8 granted and input_stereo_3 audible. */
+    if (!why && !explicit_file && access("/opt/sys/lib/liba2i_client.so", F_OK))
+        why = "no /opt/sys/lib/liba2i_client.so on this NBT";
+    if (!why && conn && access("audioconn", X_OK)) {
+        if (explicit_file)
+            conn = 0; /* explicit experiment: play unrouted */
+        else
+            why = "no audioconn program";
+    }
+    if (why) {
+        printf("audio: Bluetooth (%s)\n", why);
+        setenv("NBT_AUDIO_MODE", "bt", 1);
+        setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+        unsetenv("NBT_AUDIOCONN");
+        return;
+    }
+    snprintf(line, sizeof(line), "0x%lx", conn);
+    printf("audio: Android Auto, connection %s\n", line);
+    setenv("NBT_AUDIO_MODE", "browser", 1);
+    setenv("NBT_SDR_DROP", "2,4", 1); /* keep the media sink (ch 9) */
+    setenv("NBT_BROWSER_CONN", line, 1);
+    /* few retries: a car that refuses the route goes back to Bluetooth from the next session on */
+    setenv("NBT_AUDIOCONN_RETRIES", "2", 1);
+    if (conn) {
+        setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
+    } else
+        unsetenv("NBT_AUDIOCONN");
+}
+
+/* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
+ * oneplus_native ended without removing it (crash, kill, unplugged mid-song), remove it here. nbt_audioconn keeps
+ * audio-route.built before sending a build, until a remove is granted. */
+static void audio_route_cleanup(void)
+{
+    char cmd[160];
+    char line[32], *end;
+    unsigned long conn;
+    FILE* f;
+    static long long last_attempt = -15000;
+    int r;
+    if (access("audio-route.built", F_OK) || access("audioconn", X_OK) || ms() - last_attempt < 15000)
+        return;
+    last_attempt = ms();
+    f = fopen("audio-route.built", "r");
+    if (!f) { perror("audio-route.built"); return; }
+    if (!fgets(line, sizeof(line), f)) {
+        fprintf(stderr, "audio: invalid pending route file\n");
+        fclose(f);
+        return;
+    }
+    fclose(f);
+    conn = strtoul(line, &end, 0);
+    if (end == line || (*end != '\n' && *end != '\0') || !conn || conn > 0xffff) {
+        fprintf(stderr, "audio: invalid pending route file\n");
+        return;
+    }
+    snprintf(cmd, sizeof(cmd), "./audioconn -r 0x%lx >> audioconn-cleanup.log 2>&1",
+             conn);
+    r = system(cmd);
+    if (r)
+        fprintf(stderr, "audio: route cleanup failed (%d), will retry\n", r);
 }
 
 /* ---- child processes ------------------------------------------------------------------------------------------- */
@@ -422,7 +531,7 @@ int main(int argc, char** argv)
     setenv("NBT_AA_PAD", "8192", 0);
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
-    setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+    set_audio_mode();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
@@ -535,6 +644,7 @@ int main(int argc, char** argv)
 
     /* ---- one Android Auto session per loop pass ---- */
     while (!stopping && alive(&lease)) {
+        audio_route_cleanup();
         /* Optional HMI gate (file gate.mode in the runtime directory): the phone is only touched after the Android Auto
          * page in the HMI was opened, which creates /fs/ram3/nbt-aa-request (see src/idrive/aa_entry_plugin.cpp). */
         if (gate && access(HMI_REQUEST_FILE, F_OK)) {
@@ -650,12 +760,16 @@ int main(int argc, char** argv)
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
         if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
             char* args[] = {"./oneplus_native", "--capture-video", bus_text, device_text, 0};
+            set_audio_mode(); /* again per session: a failed audio route falls back to Bluetooth */
             snprintf(bus_text, sizeof(bus_text), "%d", bus);
             snprintf(device_text, sizeof(device_text), "%d", device);
             {
                 char capname[40];
                 snprintf(capname, sizeof(capname), "capture-%u.log", session);
+                /* /opt/sys/lib last: liba2i_client.so (A2I audio output) and what it links */
+                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH ":/opt/sys/lib", 1);
                 capture = spawn(args, 0, capname);
+                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
             report("running", session);
             {
@@ -679,6 +793,7 @@ int main(int argc, char** argv)
         if (center)
             hmi_visible();
         end(&capture);
+        audio_route_cleanup();
         if (!live)
             end(&http);
         {
@@ -713,6 +828,7 @@ done:
     if (center)
         hmi_visible();
     end(&capture);
+    audio_route_cleanup();
     end(&http);
     end(&decoder);
     end(&frames);

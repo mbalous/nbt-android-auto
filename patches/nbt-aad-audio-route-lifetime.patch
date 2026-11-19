@@ -1,0 +1,102 @@
+diff --git a/milestone-7/src/audio/audio_route.cpp b/milestone-7/src/audio/audio_route.cpp
+index 7ca74bc..0c94fae 100644
+--- a/milestone-7/src/audio/audio_route.cpp
++++ b/milestone-7/src/audio/audio_route.cpp
+@@ -168,13 +168,36 @@ void* routeWorker(void* arg) {
+     }
+     if (job->isBuild && job->owner) job->owner->buildFinished(job->gen);
+     if (job->onDone) job->onDone(job->doneUser);
++    if (job->owner) job->owner->workerFinished();
+     delete job;
+     return NULL;
+ }
+
+ } // namespace
+
+-AudioRoute::AudioRoute() : gen_(0), buildBusy_(false), busyGen_(0) { pthread_mutex_init(&lock_, NULL); }
++AudioRoute::AudioRoute() : workers_(0), gen_(0), buildBusy_(false), busyGen_(0) {
++    pthread_mutex_init(&lock_, NULL);
++    pthread_cond_init(&idle_, NULL);
++}
++
++AudioRoute::~AudioRoute() {
++    cancelPending();
++    waitIdle();
++    pthread_cond_destroy(&idle_);
++    pthread_mutex_destroy(&lock_);
++}
++
++void AudioRoute::waitIdle() {
++    pthread_mutex_lock(&lock_);
++    while (workers_) pthread_cond_wait(&idle_, &lock_);
++    pthread_mutex_unlock(&lock_);
++}
++
++void AudioRoute::workerFinished() {
++    pthread_mutex_lock(&lock_);
++    if (--workers_ == 0) pthread_cond_broadcast(&idle_);
++    pthread_mutex_unlock(&lock_);
++}
+
+ void AudioRoute::cancelPending() {
+     pthread_mutex_lock(&lock_);
+@@ -291,9 +314,13 @@ bool AudioRoute::spawn(void* p) {
+     pthread_attr_init(&attr);
+     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+     pthread_t tid;
++    pthread_mutex_lock(&lock_);
++    ++workers_;
++    pthread_mutex_unlock(&lock_);
+     int rc = pthread_create(&tid, &attr, &routeWorker, job);
+     pthread_attr_destroy(&attr);
+     if (rc != 0) {
++        workerFinished();
+         delete job;
+         return false;
+     }
+diff --git a/milestone-7/src/audio/audio_route.hpp b/milestone-7/src/audio/audio_route.hpp
+index f3e2018..3c5abdb 100644
+--- a/milestone-7/src/audio/audio_route.hpp
++++ b/milestone-7/src/audio/audio_route.hpp
+@@ -40,6 +40,7 @@ int audioconnRetryDelaySec(int attempt);
+ class AudioRoute {
+ public:
+     AudioRoute();
++    ~AudioRoute();
+
+     // Resolves the audioconn binary (env override, then known locations).
+     bool configure();
+@@ -64,10 +65,12 @@ public:
+     // Session ended: every queued / sleeping / retrying job of this route stops before its next audioconn run
+     // (an audioconn already running finishes). Jobs queued afterwards (e.g. a release) are not affected.
+     void cancelPending();
++    void waitIdle();
+
+     // Worker-thread hooks (internal).
+     bool stale(unsigned gen);
+     void buildFinished(unsigned gen);
++    void workerFinished();
+
+ private:
+     bool run(char op, uint32_t a, uint32_t b, bool two_args, GrantedFn onGranted, void* user, int delayMs);
+@@ -76,6 +79,8 @@ private:
+     std::string path_;
+     std::string suffix_;
+     pthread_mutex_t lock_;
++    pthread_cond_t idle_;
++    unsigned workers_;
+     unsigned gen_;          // bumped by cancelPending()
+     bool buildBusy_;        // a build worker of generation busyGen_ is alive
+     unsigned busyGen_;
+diff --git a/milestone-7/src/audio/browser_audio.hpp b/milestone-7/src/audio/browser_audio.hpp
+index af35efc..082ee36 100644
+--- a/milestone-7/src/audio/browser_audio.hpp
++++ b/milestone-7/src/audio/browser_audio.hpp
+@@ -71,6 +71,7 @@ public:
+
+     BrowserAudio();
+     ~BrowserAudio();
++    void waitForRoute() { route_.waitIdle(); }
+
+     // Takes the settings (readBrowserConfig()), loads the libasound shim and finds audioconn. Plays nothing yet.
+     bool init(const BrowserConfig& cfg);
