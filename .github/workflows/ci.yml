@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host C++ (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standard, sanitizers]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and run host tests
+        env:
+          CXX: clang++
+          MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          if [ "$MODE" = sanitizers ]; then
+            python3 scripts/test_host.py --sanitize
+          else
+            python3 scripts/test_host.py
+          fi
+
+  python:
+    name: Python checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.10'
+      - name: Install test dependency
+        run: python -m pip install cryptography==44.0.3
+      - name: Check Python syntax
+        run: python -m compileall -q scripts installer tools experiments
+      - name: Run TLS inspection tests
+        run: python -m unittest discover -s scripts -p 'test_*.py' -v

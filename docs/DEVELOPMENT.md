@@ -121,6 +121,24 @@ Release assets: the Windows .exe, the Python package ZIP (installer + payload), 
 The older test scripts `scripts/Test-QnxTls.py`, `Test-AndroidAutoCore.py` and `Test-AndroidAutoSession.py` still run
 the offline TLS and protocol tests (simulated phone) in the VM.
 
+## Continuous integration
+
+GitHub Actions runs on pushes and pull requests. It compiles and runs the host-compatible H.264 framing and PNG packet
+tests on Linux, both normally and with AddressSanitizer and UndefinedBehaviorSanitizer. It also checks Python syntax and
+runs the TLS inspection unit tests. Run these checks locally with:
+
+```sh
+python3 scripts/test_host.py
+python3 scripts/test_host.py --sanitize
+python3 -m pip install cryptography==44.0.3
+python3 -m compileall -q scripts installer tools experiments
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+```
+
+These are host checks, not a QNX build or a car/phone test. The complete QNX build and VM tests still require the
+toolchain and inputs described above; installer builds also require a release payload. MemorySanitizer is not enabled:
+it requires an instrumented toolchain and dependencies and would not cover the QNX target on hosted Linux.
+
 ## Working on the car
 
 `tools/nbt_ssh_session.py` keeps one SSH session open (you type the root password in your own terminal; it is never
