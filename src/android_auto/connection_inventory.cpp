@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <errno.h>
 #include <limits.h>
 
@@ -16,10 +15,8 @@ static int scan(pid_t client, pid_t server, int verbose) {
     int next = 0, matches = 0;
     unsigned count;
     for (count = 0; count < 65536; ++count) {
-        struct _server_info info;
-        int found;
-        memset(&info, 0, sizeof(info));
-        found = ConnectServerInfo(client, next, &info);
+        _server_info info = {};
+        int found = ConnectServerInfo(client, next, &info);
         if (found < 0) {
             if (errno == EINVAL) return matches;
             fprintf(stderr, "CONNECTION_QUERY_FAILED client=%ld errno=%d\n", (long)client, errno);
@@ -29,7 +26,8 @@ static int scan(pid_t client, pid_t server, int verbose) {
         if (info.nd == 0 && info.pid == server && !(info.flags & _NTO_COF_DEAD)) {
             ++matches;
             if (verbose) printf("CONNECTION client=%ld coid=%d server=%ld chid=%ld flags=%x\n",
-                    (long)client, found, (long)server, (long)info.chid, (unsigned short)info.flags);
+                    (long)client, found, (long)server, (long)info.chid,
+                    static_cast<unsigned>(static_cast<unsigned short>(info.flags)));
         }
         if (found == INT_MAX) return matches;
         next = found + 1;

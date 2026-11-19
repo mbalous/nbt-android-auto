@@ -64,7 +64,7 @@ The protocol itself (version exchange, TLS, service discovery, channels) is **NB
 - `android_auto/test_*.c(pp)`: offline tests run in the QNX VM by `scripts/Test-QnxTls.py`,
   `scripts/Test-AndroidAutoCore.py` and `scripts/Test-AndroidAutoSession.py` (TLS in memory, a simulated phone,
   certificate formats, H.264 splitting, decoder supervision).
-- `android_auto/usb_inventory.c`, `connection_inventory.c`, `tls_capabilities.c`: read-only diagnostics used while
+- `android_auto/usb_inventory.c`, `connection_inventory.cpp`, `tls_capabilities.cpp`: read-only diagnostics used while
   exploring the head unit.
-- `idrive/check_plugin.c`: loads a plugin library in the VM to check its symbols, without starting it.
-- `hello_nbt.c`: toolchain smoke test (`build.cmd`).
+- `idrive/check_plugin.cpp`: loads a plugin library in the VM to check its symbols, without starting it.
+- `hello_nbt.cpp`: toolchain smoke test (`build.cmd`).

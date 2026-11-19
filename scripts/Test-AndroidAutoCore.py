@@ -90,8 +90,10 @@ def main():
     for name in OBJECTS:
         collect("src/" + name + ".cpp")
     files["LICENSE.md"] = (reference / "LICENSE.md").read_bytes()
-    for name in ["usb_inventory", "tls_capabilities", "connection_inventory", "accessory_window", "oneplus_aoa"]:
-        files["diagnostics/" + name + ".c"] = (ROOT / "src/android_auto" / (name + ".c")).read_bytes()
+    diagnostics = {"usb_inventory.c": "-lusbdi", "tls_capabilities.cpp": "", "connection_inventory.cpp": "",
+                   "accessory_window.c": "", "oneplus_aoa.c": "-lusbdi"}
+    for source in diagnostics:
+        files["diagnostics/" + source] = (ROOT / "src/android_auto" / source).read_bytes()
 
     commands = ["set -u", "export QNX_HOST=/usr/qnx650/host/qnx6/x86",
                 "export QNX_TARGET=/usr/qnx650/target/qnx6",
@@ -106,8 +108,11 @@ def main():
     for name in OBJECTS:
         cmd = cxx + " -c src/" + name + ".cpp -o bin/" + name + ".o"
         commands += [cmd, f'echo OBJECT:{name}:$?']
-    for name, libs in [("usb_inventory", "-lusbdi"), ("tls_capabilities", ""), ("connection_inventory", ""), ("accessory_window", ""), ("oneplus_aoa", "-lusbdi")]:
-        commands += [f"if qcc -V4.4.2,gcc_ntox86 -Wall -Wextra diagnostics/{name}.c {libs} -o bin/{name}; then"]
+    cc = "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra"
+    for source, libs in diagnostics.items():
+        name = Path(source).stem
+        compiler = cxx + " -Wextra" if source.endswith(".cpp") else cc
+        commands += [f"if {compiler} diagnostics/{source} {libs} -o bin/{name}; then"]
         if name == "accessory_window":
             commands += ['  if [ "$(id -u)" != 0 ]; then',
                          '    echo PROBE:accessory_window:ROOT_REQUIRED', '  else',

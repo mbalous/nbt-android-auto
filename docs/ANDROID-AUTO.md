@@ -748,7 +748,7 @@ process was stopped. Accessory endpoint ownership remains unknown;
 do not add a competing reader based only on the existence of `/dev/oap02`.
 
 A kernel-only replacement is now implemented as
-`src/android_auto/connection_inventory.c`. It uses ConnectServerInfo to list
+`src/android_auto/connection_inventory.cpp`. It uses ConnectServerInfo to list
 connections from an explicit client PID to an explicit server PID without
 opening devices or sending io_fdinfo requests. The five-second bounded tool
 checks numeric arguments, enumeration limits and query errors. No arguments

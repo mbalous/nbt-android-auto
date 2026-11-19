@@ -5,7 +5,7 @@
 #error Build this program for QNX Neutrino 32-bit x86.
 #endif
 
-int main(void)
+int main()
 {
     if (puts("Hello World from QNX x86!") == EOF)
         return 1;
