@@ -1,0 +1,49 @@
+"""Build and run the first-party C++ TLS tools against the pinned Mbed TLS."""
+import importlib.util
+import os
+import ssl
+import subprocess
+import tarfile
+import tempfile
+import unittest
+
+from build_all import Archive, MBEDTLS_VERSION, ROOT, add_mbedtls
+
+
+class TlsExecutableTests(unittest.TestCase):
+    def test_tls_and_certificate_tools(self):
+        source = ROOT / "src/android_auto"
+        fixture_spec = importlib.util.spec_from_file_location("qnx_tls", ROOT / "scripts/Test-QnxTls.py")
+        qnx_tls = importlib.util.module_from_spec(fixture_spec)
+        fixture_spec.loader.exec_module(qnx_tls)
+
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            archive = Archive(work / "sources.tar")
+            try:
+                add_mbedtls(archive)
+            finally:
+                archive.close()
+            with tarfile.open(work / "sources.tar") as tar:
+                tar.extractall(work)
+            mbedtls = work / f"mbedtls-{MBEDTLS_VERSION}"
+            subprocess.run(["make", "-j2", "lib"], cwd=mbedtls, check=True, timeout=180)
+
+            fixtures = qnx_tls.fixtures()
+            for name, data in fixtures.items():
+                (work / name).write_bytes(data)
+            (work / "client.der").write_bytes(ssl.PEM_cert_to_DER_cert(fixtures["lab-client.pem"].decode("ascii")))
+
+            cxx = [os.environ.get("CXX", "c++"), "-std=gnu++0x", "-Wall", "-Wextra",
+                   "-I", str(mbedtls / "include")]
+            libs = [str(mbedtls / "library" / f"libmbed{name}.a") for name in ("tls", "x509", "crypto")]
+            tools = [
+                ("test_tls_memory", ["-DNBT_TLS_BACKEND_TEST", str(source / "aa_cryptor_mbedtls.cpp")], []),
+                ("test_legacy_time", [], []),
+                ("test_certificate_compat", [], ["client.der", "lab-ca.pem"]),
+            ]
+            for name, flags, args in tools:
+                executable = work / name
+                subprocess.run([*cxx, *flags, str(source / f"{name}.cpp"), *libs, "-o", str(executable)],
+                               check=True, timeout=60)
+                subprocess.run([executable, *args], cwd=work, check=True, timeout=75)

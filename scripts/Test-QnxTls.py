@@ -87,8 +87,8 @@ def main():
     out = ROOT / "build" / run_id
     out.mkdir(parents=True)
     files = fixtures()
-    files["test_tls_memory.c"] = (ROOT / "src/android_auto/test_tls_memory.c").read_bytes()
-    files["test_legacy_time.c"] = (ROOT / "src/android_auto/test_legacy_time.c").read_bytes()
+    files["test_tls_memory.cpp"] = (ROOT / "src/android_auto/test_tls_memory.cpp").read_bytes()
+    files["test_legacy_time.cpp"] = (ROOT / "src/android_auto/test_legacy_time.cpp").read_bytes()
     commands = f'''set -e
 export QNX_HOST=/usr/qnx650/host/qnx6/x86
 export QNX_TARGET=/usr/qnx650/target/qnx6
@@ -96,9 +96,9 @@ export PATH="$QNX_HOST/usr/bin:$PATH"
 cd mbedtls-{VERSION}
 make lib CC='qcc -V4.4.2,gcc_ntox86' AR=ntox86-ar CFLAGS='-O2 -D_QNX_SOURCE -Wc,-std=gnu99'
 cd ..
-qcc -V4.4.2,gcc_ntox86 -O2 -Wall -Wextra -D_QNX_SOURCE -Wc,-std=gnu99 -Imbedtls-{VERSION}/include test_tls_memory.c mbedtls-{VERSION}/library/libmbedtls.a mbedtls-{VERSION}/library/libmbedx509.a mbedtls-{VERSION}/library/libmbedcrypto.a -lsocket -o test_tls_memory
+qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O2 -Wall -Wextra -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-{VERSION}/include test_tls_memory.cpp mbedtls-{VERSION}/library/libmbedtls.a mbedtls-{VERSION}/library/libmbedx509.a mbedtls-{VERSION}/library/libmbedcrypto.a -lsocket -o test_tls_memory
 ./test_tls_memory
-qcc -V4.4.2,gcc_ntox86 -O2 -Wall -Wextra -Imbedtls-{VERSION}/include test_legacy_time.c mbedtls-{VERSION}/library/libmbedx509.a mbedtls-{VERSION}/library/libmbedcrypto.a -lsocket -o test_legacy_time
+qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O2 -Wall -Wextra -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-{VERSION}/include test_legacy_time.cpp mbedtls-{VERSION}/library/libmbedx509.a mbedtls-{VERSION}/library/libmbedcrypto.a -lsocket -o test_legacy_time
 ./test_legacy_time
 '''
     files["run.sh"] = commands.encode()
