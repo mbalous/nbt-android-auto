@@ -1,4 +1,4 @@
-"""Build and run hardware-independent C and C++ tests on a Linux host."""
+"""Build and run hardware-independent C++ tests on a Linux host."""
 import argparse
 import os
 from pathlib import Path
@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--sanitize", action="store_true", help="enable AddressSanitizer and UBSan")
     args = parser.parse_args()
 
-    flags = ["-O1", "-g", "-Wall", "-Wextra"]
+    flags = ["-std=gnu++0x", "-O1", "-g", "-Wall", "-Wextra"]
     if args.sanitize:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 
@@ -43,15 +43,11 @@ def main():
             ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
              ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
-            ("src/android_auto/tests/test_fifo_http.c", [], ["-pthread"]),
+            ("src/android_auto/tests/test_fifo_http.cpp", [], ["-pthread"]),
         ]
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
-            compiler, standard = (
-                (os.environ.get("CC", "cc"), "-std=gnu99") if source.endswith(".c")
-                else (os.environ.get("CXX", "g++"), "-std=gnu++0x")
-            )
-            subprocess.run([compiler, standard, *flags, *extra_flags, str(ROOT / source),
+            subprocess.run([os.environ.get("CXX", "g++"), *flags, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)
 

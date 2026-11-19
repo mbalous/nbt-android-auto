@@ -1,5 +1,5 @@
 #define main fifo_http_main
-#include "../nbt_fifo_http.c"
+#include "../nbt_fifo_http.cpp"
 #undef main
 
 #include <pthread.h>
@@ -25,7 +25,7 @@ static void open_pair(int sockets[2])
 
 static void* read_payload(void* arg)
 {
-    int fd = *(int*)arg;
+    int fd = *static_cast<const int*>(arg);
     char buf[1024];
     size_t off = 0;
     while (off < sizeof(payload)) {

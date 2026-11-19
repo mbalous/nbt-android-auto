@@ -88,7 +88,7 @@ int main(int argc, char** argv)
 {
     int fifo, server, client, flags, one = 1, used = 0;
     char request[4096], data[65536];
-    struct sockaddr_in addr;
+    sockaddr_in addr = {};
     const char* header = "HTTP/1.0 200 OK\r\nContent-Type: video/h264\r\nConnection: close\r\n\r\n";
 
     if (argc != 3)
@@ -107,11 +107,10 @@ int main(int argc, char** argv)
     if (server < 0)
         return 2;
     setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(HTTP_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (bind(server, (struct sockaddr*)&addr, sizeof(addr)) || listen(server, 1))
+    if (bind(server, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) || listen(server, 1))
         return 2;
     client = accept(server, 0, 0);
     close(server);
