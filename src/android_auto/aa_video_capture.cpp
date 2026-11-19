@@ -402,13 +402,14 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
     LiveQueue& q = c->queue;
     pthread_mutex_lock(&q.m);
-    const bool restart = config || has_idr(p, n);
+    const bool over_budget = q.bytes + n > kLiveBudget;
+    const bool restart = config || ((q.dropping || over_budget) && has_idr(p, n));
     if (q.dropping && !restart) {
         ++q.dropped;
         pthread_mutex_unlock(&q.m);
         return;
     }
-    if (q.bytes + n > kLiveBudget) {
+    if (over_budget) {
         if (!restart) {
             q.dropping = true;
             ++q.drops;
@@ -424,7 +425,6 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         }
     }
     q.dropping = false;
-    q.items.push_back(std::vector<uint8_t>(p, p + n));
     // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
     // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
     // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
@@ -435,15 +435,19 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         if (pad < 0 || pad > 65536)
             pad = 0;
     }
-    if (!config && pad > 0 && n + 6 < (size_t)pad) {
-        std::vector<uint8_t>& v = q.items.back();
-        const size_t fill = (size_t)pad - n - 6;
+    const size_t padded_size = !config && pad > 0 && n + 6 < (size_t)pad ? (size_t)pad : n;
+    q.items.push_back(std::vector<uint8_t>());
+    std::vector<uint8_t>& v = q.items.back();
+    v.reserve(padded_size);
+    v.insert(v.end(), p, p + n);
+    if (padded_size > n) {
+        const size_t fill = padded_size - n - 6;
         static const uint8_t head[5] = {0, 0, 0, 1, 0x0c}; // start code + NAL header type 12 (filler data)
         v.insert(v.end(), head, head + 5);
         v.insert(v.end(), fill, (uint8_t)0xff);
         v.push_back(0x80); // rbsp trailing bits
     }
-    q.bytes += q.items.back().size();
+    q.bytes += v.size();
     pthread_cond_signal(&q.cv);
     pthread_mutex_unlock(&q.m);
 }
@@ -487,13 +491,17 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
         const bool annexb = n >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1));
         if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes))
             c->error = 1;
+        else if (c->live)
+            live_enqueue(c, p, n, config);
         else {
-            char row[160];
-            int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
-                             (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
-            if (c->live)
-                live_enqueue(c, p, n, config);
-            else if (!write_all(c->data, p, n) || (c->index >= 0 && !write_all(c->index, (const unsigned char*)row, k)))
+            bool written = write_all(c->data, p, n);
+            if (written && c->index >= 0) {
+                char row[160];
+                int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
+                                 (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
+                written = k > 0 && (size_t)k < sizeof(row) && write_all(c->index, (const unsigned char*)row, k);
+            }
+            if (!written)
                 c->error = 1;
             else {
                 c->bytes += n;
