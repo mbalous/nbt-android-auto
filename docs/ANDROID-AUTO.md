@@ -274,7 +274,7 @@ This validates the fixture only; **Cinemo and vehicle decoding are not tested**.
 The pinned imageio-ffmpeg 0.6.0 package is installed only in ignored
 `.local/video-tools`; no software was installed in the car.
 
-`src/android_auto/test_decoder_deadline.c` supplies a VM-only supervisor for
+`src/android_auto/test_decoder_deadline.cpp` supplies a VM-only supervisor for
 `./NmeCmdLine -n -a0 -wd 0 -wi 0 -wm 0 -i pattern-800x480.mp4`. It allows
 15 seconds, then terminates only its own child process group, escalating after
 one further second, and reaps the child. Core dumps are disabled for the child;

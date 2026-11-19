@@ -54,7 +54,7 @@ $CXX $AAINC aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp $W/oneplus_aoa.o
 
 echo "== native_service, decode_runner, fifo_http, accessory_window"
 $CC -O2 -Wall -Wextra nbt_native_service.c -o $OUT/native_service
-$CC -O2 -Wall -Wextra nbt_decode_runner.c -o $OUT/decode_runner
+$CXX -O2 -Wextra nbt_decode_runner.cpp -o $OUT/decode_runner
 $CXX -O0 -Wextra nbt_fifo_http.cpp -lsocket -o $OUT/fifo_http
 $CC -Wall -Wextra accessory_window.c -o $OUT/accessory_window
 

@@ -68,11 +68,11 @@ int main(int argc, char** argv)
     if (child < 0)
         return 2;
     if (!child) {
-        struct rlimit core;
+        const rlimit core = {0, 0};
+        char* const end_args = 0;
         /* Software decoding on purpose (-wd 0 -wi 0 -wm 0, car test 2026-11-10): hardware decoding (-wd 1) gave a
          * picture, but the io-nme video queue grew to 0.85 MB (seconds of delay; software keeps it at 0.004 MB), and a
          * playback speed above normal (-s 1200) made NmeCmdLine stop after the first frame of the live stream. */
-        memset(&core, 0, sizeof(core));
         if (setrlimit(RLIMIT_CORE, &core) || setpgid(0, 0)) /* no core files, own process group */
             _exit(125);
 
@@ -87,23 +87,23 @@ int main(int argc, char** argv)
             execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,667", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
-                  "-i", "-ic", argv[3], (char*)0);
+                  "-i", "-ic", argv[3], end_args);
         else if (!strcmp(argv[4], "screencenter"))
             /* whole 800x480 phone canvas 1:1 (no crop); nbt_hwvideo places the window in the middle of the display */
             execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
-                  "-i", "-ic", argv[3], (char*)0);
+                  "-i", "-ic", argv[3], end_args);
         else if (!strcmp(argv[4], "screen"))
             /* -vr 0,0,1000,625: only the phone's content rows 0..299 of 480 (insets 0,180,0,0) */
             execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,625", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
-                  "-i", "-ic", argv[3], (char*)0);
+                  "-i", "-ic", argv[3], end_args);
         else
             /* no display (-n): decoded frames go to the raw video output argv[4] (old PNG pipeline) */
             execl(argv[2], "NmeCmdLine", "-n", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-i", "-ic", "-dv", argv[4],
-                  argv[3], (char*)0);
+                  argv[3], end_args);
         _exit(127);
     }
 

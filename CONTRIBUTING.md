@@ -22,7 +22,7 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
    would still help.
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).
 4. **Latency**: the Cinemo HTTP buffer adds controller delay. Hardware decoding (`-wd 1`) was tried and made it worse
-   (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.c`.
+   (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.cpp`.
 5. **Signed release builds** (Windows code signing, macOS notarization).
 6. **Lane guidance** in the cluster has not been seen with a real phone yet.
 
