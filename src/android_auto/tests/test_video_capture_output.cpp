@@ -82,6 +82,29 @@ void expect_live_output(Capture& c, const std::vector<uint8_t>& expected)
     expect_end(data[0]);
 }
 
+void test_padded_queue_budget()
+{
+    Capture c;
+    c.live = true;
+    const size_t large = 2 * 1024 * 1024;
+    const size_t tail = kLiveBudget - large - 12;
+    std::vector<uint8_t> frame(large, 0xaa);
+    memcpy(frame.data(), kFrame, sizeof(kFrame));
+    video(0, frame.data(), large, 1, &c);
+    video(0, frame.data(), tail, 2, &c);
+
+    // Twelve bytes remain: a six-byte frame fits only without its 24-byte padded size.
+    video(0, kFrame, sizeof(kFrame), 3, &c);
+    require(c.queue.bytes == large + tail && c.queue.dropping && c.queue.dropped == 1,
+            "drop dependent frame that only fits before padding");
+
+    const uint8_t idr[] = {0, 0, 0, 1, 0x65, 0xaa};
+    video(0, idr, sizeof(idr), 4, &c);
+    require(!c.queue.dropping && c.queue.dropped == 2 && c.queue.items.size() == 2 &&
+            c.queue.bytes == tail + 24 && c.queue.items.back()[4] == 0x65,
+            "evict enough backlog to queue the padded keyframe within budget");
+}
+
 void test_live_stream()
 {
     Capture c;
@@ -126,6 +149,7 @@ int main()
     test_diagnostic_capture();
     test_live_stream();
     test_live_recovery();
+    test_padded_queue_budget();
     puts("Capture output OK: diagnostic index, live bytes, and recovery after backpressure");
     return 0;
 }

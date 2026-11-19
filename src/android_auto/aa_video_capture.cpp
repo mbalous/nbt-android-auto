@@ -402,7 +402,18 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
     LiveQueue& q = c->queue;
     pthread_mutex_lock(&q.m);
-    const bool over_budget = q.bytes + n > kLiveBudget;
+    // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
+    // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
+    // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
+    static long pad = -1;
+    if (pad < 0) {
+        const char* e = getenv("NBT_AA_PAD");
+        pad = e ? strtol(e, 0, 10) : 0;
+        if (pad < 0 || pad > 65536)
+            pad = 0;
+    }
+    const size_t padded_size = !config && pad > 0 && n + 6 < (size_t)pad ? (size_t)pad : n;
+    const bool over_budget = q.bytes + padded_size > kLiveBudget;
     const bool restart = config || ((q.dropping || over_budget) && has_idr(p, n));
     if (q.dropping && !restart) {
         ++q.dropped;
@@ -418,24 +429,13 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
             return;
         }
         // a fresh IDR/config does not fit: throw away the old backlog, the decoder restarts on this picture
-        while (!q.items.empty() && q.bytes + n > kLiveBudget) {
+        while (!q.items.empty() && q.bytes + padded_size > kLiveBudget) {
             q.bytes -= q.items.front().size();
             q.items.pop_front();
             ++q.dropped;
         }
     }
     q.dropping = false;
-    // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
-    // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
-    // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
-    static long pad = -1;
-    if (pad < 0) {
-        const char* e = getenv("NBT_AA_PAD");
-        pad = e ? strtol(e, 0, 10) : 0;
-        if (pad < 0 || pad > 65536)
-            pad = 0;
-    }
-    const size_t padded_size = !config && pad > 0 && n + 6 < (size_t)pad ? (size_t)pad : n;
     q.items.push_back(std::vector<uint8_t>());
     std::vector<uint8_t>& v = q.items.back();
     v.reserve(padded_size);
