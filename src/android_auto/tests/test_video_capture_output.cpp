@@ -88,6 +88,8 @@ void test_live_stream()
     c.live = true;
     config(kConfig, sizeof(kConfig), &c);
     video(0, kFrame, sizeof(kFrame), 42, &c);
+    require(c.frames == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
+            "live summary counts source frames, configs and unpadded bytes");
 
     const uint8_t padded_frame[] = {
         0, 0, 0, 1, 0x41, 0xaa, 0, 0, 0, 1, 0x0c,
@@ -110,6 +112,8 @@ void test_live_recovery()
     video(0, kFrame, sizeof(kFrame), 3, &c);
     frame[4] = 0x65;
     video(0, frame.data(), frame.size(), 4, &c);
+    require(c.frames == 4 && c.bytes == 3 * frame.size() + sizeof(kFrame),
+            "live source count includes frames dropped by the queue");
     expect_live_output(c, frame);
 }
 
