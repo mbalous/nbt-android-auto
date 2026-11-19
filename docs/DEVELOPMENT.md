@@ -2,7 +2,7 @@
 
 This page explains how the pieces are built and how to work on the car safely. **One command builds every program of
 the installed package** in the QNX VM: `python scripts/build_all.py` (see [Building everything](#building-everything)).
-Built from this repository, the programs are byte-identical to the ones in installer 2026.11.10.2 (details below).
+See below for the historical binary comparison with installer 2026.11.10.2.
 
 ## What you need
 
@@ -95,8 +95,10 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 | Mbed TLS 3.6.7 | release archive + `scripts/mbedtls_legacy_time.py` (old phone certificate dates) + QNX config (no AES-NI/ASM/PadLock), static libraries |
 | NBT-AAD core `libnbt_aa_core.a` | upstream `milestone-7/src` + `scripts/aa_session_overlay.py` + `patches/*.patch` + our `aa_cryptor_mbedtls.cpp` (Mbed TLS instead of OpenSSL) |
 | `oneplus_native` | `oneplus_aoa.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp`, `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
-| `native_service`, `decode_runner` | C, `-O2` |
-| `fifo_http`, `accessory_window` | C, no optimisation (as shipped) |
+| `native_service` | C, `-O2` |
+| `accessory_window` | C, no optimisation |
+| `decode_runner` | C++, `-O2` |
+| `fifo_http` | C++, no optimisation |
 | `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | C++ `-O1`, with the MOST/DSI client from `knob/ref/` |
 | `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
 

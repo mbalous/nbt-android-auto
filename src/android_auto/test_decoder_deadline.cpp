@@ -24,24 +24,24 @@ static int supervise(int test) {
     child=fork();
     if (child<0) return 125;
     if (child==0) {
-        struct rlimit core;
-        memset(&core,0,sizeof(core)); core.rlim_cur=0; core.rlim_max=0;
+        const rlimit core = {0, 0};
+        char* const end_args = 0;
         if (setpgid(0,0) || setrlimit(RLIMIT_CORE,&core)) _exit(125);
         if (test==1) { signal(SIGTERM,SIG_IGN); for (;;) pause(); }
         if (test==2) {
             if (setenv("LD_PRELOAD","./foreground.so",1)) _exit(125);
-            execl("./io-nme","io-nme","-p",".","-c","-vv",(char*)0);
+            execl("./io-nme","io-nme","-p",".","-c","-vv",end_args);
             _exit(127);
         }
         if (test==5) {
-            execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","-ic","-dv","http-frames.raw","http://127.0.0.1:18765/pattern.h264",(char*)0);
+            execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","-ic","-dv","http-frames.raw","http://127.0.0.1:18765/pattern.h264",end_args);
             _exit(127);
         }
         if (test==3 || test==4) {
-            execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","-ic","-dv",test==3 ? "annexb-frames.raw" : "mp4-frames.raw",test==3 ? "pattern-800x480.h264" : "pattern-800x480.mp4",(char*)0);
+            execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","-ic","-dv",test==3 ? "annexb-frames.raw" : "mp4-frames.raw",test==3 ? "pattern-800x480.h264" : "pattern-800x480.mp4",end_args);
             _exit(127);
         }
-        execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","pattern-800x480.mp4",(char*)0);
+        execl("./NmeCmdLine","NmeCmdLine","-n","-a0","-wd","0","-wi","0","-wm","0","-i","pattern-800x480.mp4",end_args);
         _exit(127);
     }
     /* Child establishes its own group before exec; race-safe parent assist. */
