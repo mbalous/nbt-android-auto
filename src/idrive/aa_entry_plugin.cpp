@@ -2,17 +2,26 @@
 //
 // The picture is not drawn by this page: nbt_hwvideo shows the hardware video window in front of the HMI (the very
 // first version used a WAL sprite, see experiments/wal-overlay; some comments below still say so). This page
-//   - starts the connection: opening it creates /fs/ram3/nbt-aa-request (native_service waits for it with gate.mode)
+//   - opening it creates /fs/ram3/nbt-aa-request (native_service waits for it only with gate.mode, now opt-in: $P/gate-on)
 //   - shows the connection status (from /fs/ram3/nbt-aa-state, written by native_service at least every 2 s):
 //       no phone / phone found, starting / replug needed / device without Android Auto / several devices / service down
 //   - brings Android Auto to the front as soon as it runs: iDrive is moved to the inert hold state 13 (focusEvent 52),
 //     where controller turns / pushes / tilts do nothing in iDrive (nbt_knob forwards them to the phone), and the overlay
 //     is shown (/fs/ram3/nbt-aa-hidden removed). Same idea as the NBT-AAD reference rhmiapp state 13 and iDrive's own
 //     ST_CarPlay state.
+//   - while Android Auto runs, the menu entry itself leads straight to the deepest hold state (2026-11-12): its action
+//     takes the target from model 5 (raIntModel), which a poller sets to 20 or 10. Car 2026-11-12: after a while iDrive
+//     ignored every focus event 52/54 (the entry page lost the focus, no hold state got it, until a reboot), so opening
+//     the entry no longer depends on them. The poller starts with the first focus event of one of our pages (posts from
+//     create() did not run on this HMI); until then the entry page and its focus event do the job as before.
 //   - BACK (or a tilt iDrive treats as back) pops iDrive from 13 to the entry page 10: while Android Auto runs the press
 //     belonged to the phone, so iDrive is put straight back on 13 (the presenter waits 300 ms before hiding: no blink).
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
+//   - "Start at boot: on/off" (inert page 35): switches the flag file start-at-boot.off in the package; nbt_knob reads it
+//     when the first session of a boot runs and then brings the picture to the front (show request) - or not.
+//   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
+//     (UDS 11 01 through the gateway), formerly the separate NbtReboot plugin ("Restart iDrive" under Multimedia).
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.
 // ABI as in experiments/png-pipeline/dynamic_image_plugin.cpp (vehicle-tested PluginApp ctor, addHandler(state,1,...) focus events, post()).
 // Checked in this car's libraries: PluginApp::triggerEvent(unsigned), updateModel(unsigned, TextID const&),
@@ -21,6 +30,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -28,6 +38,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <new>
+extern char** environ;
 namespace bmw {
 class IDispatcher; class Bundle; class IPluginApp;
 class Parcel { public: bool readBool(bool&) const; };
@@ -36,6 +47,7 @@ template<class R,class A1,class A2,class A3,class A4> struct Delegate {
     R (*stub)(void*,A1);
 };
 typedef Delegate<bool,const Parcel&,void,void,void> ActionDelegate;
+typedef Delegate<bool,const BasicString<unsigned short>&,void,void,void> CdsDelegate;
 class TextID {
 public:
     explicit TextID(unsigned id);   // _ZN3bmw6TextIDC1Ej -> ID(id, 0x28): {u32 id, u32 type}, trivially destructible
@@ -49,7 +61,12 @@ public:
     void post(Runnable*,unsigned);
     void triggerEvent(unsigned);
     void updateModel(unsigned,const TextID&);
+    void updateModel(unsigned,int);   // _ZN3bmw9PluginApp11updateModelEji (in this car's libAppFramework.A.so)
     void addHandler(unsigned,unsigned,const ActionDelegate&);
+    // this car's libAppFramework.A.so (2026-11-17): start() = state 0/4 -> 1 + PluginAppHandler::start() (the queue of
+    // post()ed runnables is served from then on); the HMI calls it only when the page is first opened.
+    bool start();
+    void cdsAddPropertyChangedEventHandler(BasicString<char>&,unsigned,const CdsDelegate&);
 private:
     uint32_t opaque_[1024];
 };
@@ -59,15 +76,30 @@ const char* const kRequest="/fs/ram3/nbt-aa-request";
 const char* const kHidden="/fs/ram3/nbt-aa-hidden";
 const char* const kState="/fs/ram3/nbt-aa-state";
 const char* const kLeave="/fs/ram3/nbt-aa-leave";
+// BACK (car 2026-11-17): iDrive's BACK goes back in iDrive's history, also from the deepest hold level (log: "hold focus
+// 0, level 7" -> "page left", never level 6), so it left Android Auto while the phone went back as well. nbt_knob writes
+// this flag on the driver's BACK while the picture is on screen; when the page is left within 2 s of it, the Checker
+// brings Android Auto back with one hold event (hold(): 1 per s, 10 per minute).
+const char* const kBackKey="/fs/ram3/nbt-aa-back";
+const char* const kGuard="/fs/ram3/nbt-aa-guard";   // nbt_knob's BACK guard (tilt right on the driver's BACK)
 const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11, kStatusModel=4;
 // picture mode selection (2026-11-08): buttons on page 10 lead to the inert states 30 (16:9) / 31 (widescreen); their
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
 const unsigned kMode169State=30, kModeWideState=31, kEvEntry=53, kModel169=6, kModelWide=7;
 const unsigned kRestartState=32;                     // "Android Auto neu starten" -> inert page 32, back to 10
+const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert page 35, back to 10
+const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
+bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
+// The real reason iDrive "ignored" 52 / 54 (car 2026-11-18, HmiMain3D CFocusEvent::perform @0x88fd70b): every focus
+// event object counts its performs and refuses from the 12th on ("FocusEvent counter > 10"; never reset, only apps with
+// the RHMI permission rhmi.unlimitedfocusevents are exempt). So the XML has a pool of 500 focus events (200..699, all
+// to hold state 13); hold() uses each 10 times, then the next, and moves on at once after an ignored one.
+const unsigned kEvPoolFirst=200, kEvPoolCount=500, kEvPoolUses=10;   // 500 (user 2026-11-18: long drives), was 100
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
-       kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17 };
+       kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
+       kTxtBootOn=31, kTxtBootOff=32 };
 void touch(const char* path) { int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0)close(fd); }
 // --- automatic start of the Android Auto service (boot.sh of the persistent package), like the NBT-AAD reference:
 // QNX spawn() into a new process group, no zombie, stdin/out/err /dev/null. Rate-limited to one start per 30 s.
@@ -99,12 +131,17 @@ void launchService() {
 const char* const kPkg="/var/opt/hmi/data/rw/NbtAndroidAutoRT";
 bool modeIs169() { return access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/split800",F_OK)==0; }
 long g_lastMode=0;
+// set when page 10 got the focus in this boot: the mode / restart buttons sit on it, so a real press always comes after
+// it, while a mode page the HMI restores at boot does not (replaces the former "nothing in the first 60 s" guard)
+bool g_entrySeen=false;
+void plog(const char* what,int a);
 // restart of the Android Auto service (not the head unit): stop native_service, wait for its lock to go, run boot.sh.
 // flag = new picture mode flag file, or 0 to keep the mode (restart button, user request 2026-11-08: recovery when
 // Android Auto shows "connected" but the picture does not come)
 void restartService(const char* flag) {
     long t=mono_s();
-    if(t<60||(g_lastMode&&t-g_lastMode<10))return;     // not right after boot (restored state) or in a burst
+    if(!g_entrySeen){plog("restart ignored: page 10 not opened in this boot (restored state)",0);return;}
+    if(g_lastMode&&t-g_lastMode<10){plog("restart ignored: less than 10 s after the last one",0);return;}
     g_lastMode=t;
     int nul=open("/dev/null",O_RDWR);
     if(nul<0)return;
@@ -132,7 +169,8 @@ void restartService(const char* flag) {
 }
 void setMode(bool split) { restartService(split?"split800":"anamorph"); }
 // started once from create(): factory-time posts did not run on this HMI (2026-11-06), so a detached thread waits
-void* autostartThread(void*) { sleep(15); launchService(); return 0; }
+// no delay (user 2026-11-12): boot.sh is started as soon as the HMI has created the plugin
+void* autostartThread(void*) { launchService(); return 0; }
 long now_s() { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (long)t.tv_sec; }
 long long now_ms() { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (long long)t.tv_sec*1000+t.tv_nsec/1000000; }
 // small diagnostic log (car 2026-11-07: after a while MENU no longer left Android Auto); bounded to 64 KB
@@ -170,10 +208,13 @@ class Entry;
 // Problem: every tilt LEFT acted as BACK and every tilt RIGHT opened the split screen; each was undone with a focus event
 // (triggerEvent 52). After a few dozen of them the HMI stopped honouring the event (picture gone until a reboot).
 // Now: kHoldCount nested inert states (13 .. 13+N-1, each the parent of the next, focus event 52 targets the deepest).
-// BACK / tilt left only climbs one level and stays on a hold state: no event. Only when the entry page (10) is reached
+// 2026-11-17: one hold state only - BACK goes back in iDrive's history (it never climbed the levels) and tilt left is
+// kept on the hold state by nbt_knob's guards (tilt right, then BACK). If a guard misses, the entry page is reached and
+// one hold event brings Android Auto back (below).
+// Only when the entry page (10) is reached
 // one event goes out. Side panels / popups: at most one re-hold per 1.5 s. Never more than 10 events per minute, and no
 // periodic re-hold any more. The split screen itself is best switched off in iDrive (OPTION -> split screen).
-const unsigned kHoldCount=8;
+const unsigned kHoldCount=1;   // 2026-11-17: one hold state (was 8 nested ones; nbt_knob's BACK / tilt guards)
 // Decides, shortly after a hold state lost focus, what happened:
 //   another hold state has the focus (BACK climbed a level)         -> nothing
 //   a hard key was pressed (flag from nbt_knob)                      -> hide
@@ -202,19 +243,88 @@ public:
     BackToEntry():app(0) {}
     void run() { if(app){plog("mode chosen -> back to page 10");app->triggerEvent(kEvEntry);} }
 };
+// Show request (2026-11-17, to replace favourite 8): a program creates /fs/ram3/nbt-aa-show; the poll below removes it
+// and, while Android Auto runs, sends the hold focus event (52/54, through hold(): rate limit and loop guard apply) to
+// bring the picture to the front from wherever iDrive is. Open: whether iDrive honours the focus event while another
+// application is in front: car 2026-11-17, yes - brought to the front at once. The poll starts 5 s after the plugin is
+// created (so it also serves "Start at boot", before the page was ever opened) and again from the focus handlers.
+const char* const kShowRequest="/fs/ram3/nbt-aa-show";
+// Early start (2026-11-17): car log of 2026-11-17 - nothing post()ed ran before the page was first opened (the HMI calls
+// PluginApp::start() only then), so the show request did nothing at boot. create() now calls start() itself (a later
+// start() from the HMI finds state 1 and just returns true; init()/onInit still come from the HMI as before).
+// Car data: CDS properties driving.gear and sensors.PDCStatus (names from NBT-AAD's EVO app), subscribed 3 s after
+// create; every change goes to the plugin log and to /fs/ram3/nbt-aa-gear / nbt-aa-pdc. Car 2026-11-17: both exist on
+// this NBT; '{"PDCStatus":1}' = parking assistant on screen, 2 = off; gear read '{"gear":15}' in P.
+// Back after parking (user 2026-11-17: after the parking assistant iDrive returned to its last screen, not to Android
+// Auto): when PDCStatus becomes 1 while the picture is on screen (no nbt-aa-hidden yet: the PDC value comes ~150 ms
+// before the page loses focus), its end (2) creates the show request, so Android Auto comes back.
+void cdsText(const bmw::BasicString<unsigned short>& v,char* out,size_t size) {
+    const unsigned short* p=*reinterpret_cast<const unsigned short* const*>(&v);   // data_ = the UTF-16 text itself
+    size_t n=0;
+    while(p&&p[n]&&n<size-1){out[n]=p[n]<0x80?(char)p[n]:'?';++n;}
+    out[n]=0;
+}
+void cdsLog(const char* name,const char* file,const bmw::BasicString<unsigned short>& v) {
+    char text[160];cdsText(v,text,sizeof(text));
+    char line[200];snprintf(line,sizeof(line),"CDS %s = '%s'",name,text);
+    plog(line,0);
+    int fd=open(file,O_WRONLY|O_CREAT|O_TRUNC,0644);
+    if(fd>=0){size_t l=strlen(text);text[l]='\n';write(fd,text,l+1);close(fd);}
+}
+bool onGear(void*,const bmw::BasicString<unsigned short>& v){cdsLog("driving.gear","/fs/ram3/nbt-aa-gear",v);return true;}
+// Night mode (user 2026-11-17: Waze stayed white at night): the core advertises the NIGHT_MODE sensor but nothing fed it,
+// so the phone always got day. NBT-AAD's vehicle.dayNightChangeOver answers '{"error":400}' on this NBT: HmiMain3D's CDS
+// table has no day/night property (car 2026-11-17). controls.headlights ('{"headlights":%d}') is used instead and goes
+// to /fs/ram3/nbt-aa-headlights, read by the session: headlights on = night.
+bool onHeadlights(void*,const bmw::BasicString<unsigned short>& v){cdsLog("controls.headlights","/fs/ram3/nbt-aa-headlights",v);return true;}
+bool g_pdcFromAa=false;   // the parking assistant came up over the Android Auto picture
+bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
+    cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);
+    char text[160];cdsText(v,text,sizeof(text));
+    const char* d=text;while(*d&&(*d<'0'||*d>'9'))++d;
+    const int st=*d?atoi(d):-1;
+    if(st==1){g_pdcFromAa=access(kHidden,F_OK)!=0;plog("parking assistant on, Android Auto was on screen",g_pdcFromAa?1:0);}
+    else if(st==2&&g_pdcFromAa){g_pdcFromAa=false;touch(kShowRequest);plog("parking assistant off: back to Android Auto",0);}
+    return true;
+}
+class CdsSubscribe : public bmw::Runnable {
+public:
+    bmw::PluginApp* app;
+    CdsSubscribe():app(0) {}
+    void run() {
+        if(!app)return;
+        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus"),d("controls.headlights");
+        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc},dd={app,&onHeadlights};
+        app->cdsAddPropertyChangedEventHandler(g,0,dg);
+        app->cdsAddPropertyChangedEventHandler(p,0,dp);
+        app->cdsAddPropertyChangedEventHandler(d,0,dd);
+        plog("CDS handlers for driving.gear, sensors.PDCStatus and controls.headlights registered",0);
+    }
+};
+CdsSubscribe g_cds;
+// HMI thread, every 250 ms once started: the entry's target (model 5) follows the service state; show requests
+const unsigned kTargetModel=5;
+class TargetPoll : public bmw::Runnable {
+public:
+    bmw::PluginApp* app; Entry* e; bool active; int target;
+    TargetPoll():app(0),e(0),active(false),target(10) {}
+    void start() { if(!active&&app){active=true;app->post(this,0);} }
+    void run();
+};
 class Entry : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
-    unsigned shownText; int shownMode; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
+    unsigned shownText; int shownMode, shownBoot; long long lastBootToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
+    TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
-        checker.e=this; verifier.e=this;
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
+        checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
     bool holdFocused() const { return focusMask!=0; }
@@ -223,7 +333,9 @@ public:
     // 5 s (car 2026-11-08: with the focus in the split screen iDrive gave it back only after ~4.4 s; 2.5 s hid the picture
     // in between)
     void verify() { if(!verifier.pending&&!stopping&&app){verifier.pending=true;app->post(&verifier,5000);} }
-    void hold(const char* why) {
+    // counted=false: a show request and its one follow-up (NAV key, parking assistant, AUX): one per driver action, so
+    // they do not use up the loop guard (car 2026-11-18: a few NAV presses -> "refused by loop guard" for a minute)
+    void hold(const char* why,bool counted=true) {
         // review 2026-11-09: on every entry with Android Auto running the checker (+30 ms) and the status poll (+50 ms)
         // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
         // first ignored event was exactly such a pair. One event per second at most.
@@ -232,10 +344,13 @@ public:
         lastHoldMs=tm;lastAutoHold=now_s();
         long t=now_s();
         if(t-window>=60){window=t;holds=0;}
-        if(++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
+        if(counted&&++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
         // car 2026-11-09: iDrive sometimes ignores 52 for the rest of the drive (entry page shown, picture hidden): after
         // an ignored attempt the next one uses 54 (to hold state 13), then 52 again, ...
-        const unsigned ev=ignoredHolds%2?kEvHoldAlt:kEvHold;
+        if(ignoredHolds!=evIgnoredSeen){evIgnoredSeen=ignoredHolds;evUses=kEvPoolUses;}   // ignored: next event
+        if(evUses>=kEvPoolUses){evIdx=(evIdx+1)%kEvPoolCount;evUses=0;}
+        ++evUses;
+        const unsigned ev=kEvPoolFirst+evIdx;
         plog(why,(int)holds);
         plog("  focus event",(int)ev);
         plog("  ms since the last focus change",(int)(tm-lastFocusMs>100000?100000:tm-lastFocusMs));
@@ -254,6 +369,8 @@ public:
             bmw::TextID a(mode==1?kTxt169On:kTxt169),b(mode==2?kTxtWideOn:kTxtWide);
             app->updateModel(kModel169,a);app->updateModel(kModelWide,b);shownMode=mode;
         }
+        int boot=bootOn()?1:2;
+        if(boot!=shownBoot){bmw::TextID tb(boot==1?kTxtBootOn:kTxtBootOff);app->updateModel(kBootModel,tb);shownBoot=boot;}
         long t=now_s();
         if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=10){lastAutoHold=t;hold("hold (entry page, retry)");}
         app->post(this,500);
@@ -263,7 +380,9 @@ public:
         Entry* e=static_cast<Entry*>(self);
         bool focused=false;p.readBool(focused);
         e->entryFocused=focused;e->lastFocusMs=now_ms();
+        e->target.start();
         plog("entry focus",focused);
+        if(focused)g_entrySeen=true;
         if(focused&&!e->stopping){
             unlink(kLeave);                    // the driver came back on purpose
             touch(kRequest);
@@ -277,8 +396,25 @@ public:
     static bool modeWideFocus(void* self,const bmw::Parcel& p) { return modeFocus(static_cast<Entry*>(self),p,false); }
     static bool modeFocus(Entry* e,const bmw::Parcel& p,bool split) {
         bool focused=false;p.readBool(focused);
-        plog(split?"mode page 16:9 focus":"mode page widescreen focus",focused);
+        plog(split?"mode page split screen focus":"mode page full width focus",focused);
         if(focused&&!e->stopping){setMode(split);e->shownMode=0;e->app->post(&e->back,400);}
+        return true;
+    }
+    // page 35: switch "Start at boot", back to page 10 (not for a page the HMI restores at boot, not twice within 2 s)
+    static bool bootFocus(void* self,const bmw::Parcel& p) {
+        Entry* e=static_cast<Entry*>(self);
+        bool focused=false;p.readBool(focused);
+        plog("start at boot page focus",focused);
+        if(!focused||e->stopping)return true;
+        const long long tm=now_ms();
+        if(!g_entrySeen)plog("start at boot ignored: page 10 not opened in this boot (restored state)",0);
+        else if(tm-e->lastBootToggleMs<2000)plog("start at boot ignored: switched just before",0);
+        else{
+            e->lastBootToggleMs=tm;
+            if(bootOn())touch(kBootOff); else unlink(kBootOff);
+            plog("start at boot now",bootOn()?1:0);
+        }
+        e->shownBoot=0;e->app->post(&e->back,400);
         return true;
     }
     static bool restartFocus(void* self,const bmw::Parcel& p) {
@@ -292,13 +428,26 @@ public:
         }
         return true;
     }
+    long long showUntilMs;   // a show request was handled: until then, a lost focus is taken back once (Checker)
+    // car 2026-11-18: iDrive ignores every second focus event (after one that took, the next is ignored; after an ignored
+    // one, the other event number takes). A show request's event is checked ~1.1 s later (TargetPoll) and, not taken,
+    // sent again at once with the other number instead of hiding after the Verifier's 5 s. Once: the retry itself gets
+    // no retry (car 2026-11-18: retrying the retry sent an event every 1.26 s for as long as iDrive ignored them all).
+    long long showRetryAtMs;
+    unsigned evIdx,evUses,evIgnoredSeen;   // focus event pool (kEvPoolFirst..): current event, its uses, ignoredHolds seen
+    void showHold(const char* why,bool retry=true) {
+        const long long before=lastHoldMs;
+        hold(why,false);
+        if(retry&&lastHoldMs!=before)showRetryAtMs=lastHoldMs+1100;   // only when an event actually went out
+    }
     static bool holdFocus(void* self,const bmw::Parcel& p) {
         HoldSlot* s=static_cast<HoldSlot*>(self); Entry* e=s->e;
         bool focused=false;p.readBool(focused);
         if(focused)e->focusMask|=1u<<s->idx; else e->focusMask&=~(1u<<s->idx);
         e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
-        if(focused){unlink(kLeave);unlink(kHidden);e->ignoredHolds=0;e->startPolling(500);}
+        e->target.start();
+        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)
         return true;
     }
@@ -309,11 +458,61 @@ public:
         return true;
     }
 };
+void TargetPoll::run() {
+    if(!app||!e||e->stopping){active=false;return;}
+    bool running=false;
+    readStatus(&running);
+    const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
+    if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
+    if(unlink(kShowRequest)==0){
+        // NAV (car 2026-11-18): iDrive opens its navigation ~1.3 s after the key, after the show request has already
+        // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
+        // Android Auto) it always did. For 4 s the Checker takes the focus back once more.
+        if(running)e->showUntilMs=now_ms()+4000;
+        unlink(kLeave);                    // an iDrive key from before this request (written also while hidden)
+        if(!running)plog("show request ignored: Android Auto not running",0);
+        else if(e->holdFocused())plog("show request: already on screen",0);
+        else e->showHold("show request");
+    }
+    if(e->showRetryAtMs&&now_ms()>=e->showRetryAtMs){
+        e->showRetryAtMs=0;
+        // the driver left Android Auto with an iDrive key in between (car 2026-11-18: RADIO right after NAV was pulled
+        // back): no retry, no follow-up
+        if(access(kLeave,F_OK)==0){e->showUntilMs=0;plog("show request retry dropped: Android Auto left",0);}
+        else if(running&&!e->holdFocused()){
+            ++e->ignoredHolds;                                     // next event: the other number
+            e->showHold("show request not taken -> other focus event",false);
+        }
+    }
+    app->post(this,250);   // 250 ms: show requests (NAV key, parking assistant) take effect quickly
+}
 void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
-    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);return;}
+    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
+    {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
+        // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
+        struct stat st;
+        if(stat(kGuard,&st)==0&&time(0)-st.st_mtime<=1&&now_ms()-e->lastFocusMs<1500){e->check(200);return;}
+    }
+    {
+        struct stat st;
+        const bool back=stat(kBackKey,&st)==0&&time(0)-st.st_mtime<=2;
+        unlink(kBackKey);
+        if(back&&e->running){
+            const long long wait=1000-(now_ms()-e->lastHoldMs);
+            if(wait>0){touch(kBackKey);e->check((unsigned)wait+50);plog("check: BACK left the page, hold in ms",(int)wait);return;}
+            plog("check: BACK left the page -> back to Android Auto");e->hold("hold (after BACK)");return;
+        }
+    }
+    if(e->running&&now_ms()<e->showUntilMs){
+        const long long wait=1000-(now_ms()-e->lastHoldMs);       // hold() sends at most one event per second
+        if(wait>0){e->check((unsigned)wait+50);plog("check: focus taken after a show request, hold in ms",(int)wait);return;}
+        e->showUntilMs=0;
+        e->showHold("check: focus taken after a show request (NAV: iDrive navigation) -> hold");
+        return;
+    }
     if(e->running&&e->holdVisible()){
         // tilt right puts the iDrive focus into the split screen: taken back at once, so a normal tilt right is not noticed
         // in Android Auto; a second tilt within 1.5 s still reaches the split screen menu (user request 2026-11-08: not
@@ -334,6 +533,114 @@ void Verifier::run() {
     ++e->ignoredHolds;
     touch(kHidden);
 }
+// --- "Restart system" (moved from the NbtReboot plugin, 2026-11-12) ---------------------------------------------------
+// Page 33 asks ("Restart the head unit now?"), its only button leads to the inert page 34. When page 34 gets the focus,
+// nbt_reset from the package sends UDS 11 01 (hardReset) to the head unit through the gateway's HSFZ port, the same
+// request as Tool32's STEUERGERAETE_RESET (car 2026-11-12: accepted, the head unit rebooted). No HMI process is touched.
+// Guards (the HMI may restore the last page after a reboot, which must never restart the head unit again):
+//   - nothing within the first 30 s after boot (kept here: a mistake would be a reboot loop)
+//   - only when page 33 got the focus less than 2 minutes before (the driver opened it and pushed the button)
+//   - at most one start per 30 s (lifted again when the attempt failed)
+// Page 34 says why nothing happens: a guard's reason, or nbt_reset's result. nbt_reset runs through /bin/sh, which
+// writes its exit code to /fs/ram3/nbt-reboot.rc; a Runnable on the HMI thread polls that file every 500 ms for 20 s.
+// The gateway address comes from the file "gateway" in the package (one line, e.g. 169.254.102.32); without it
+// nbt_reset tries the HSFZ broadcast. nbt_reset's output: /fs/ram3/nbt-reboot.log.
+const unsigned kSysAskState=33, kSysGoState=34, kSysModel=85;
+enum { kTxtSysRestarting=24, kTxtSysTooEarly=25, kTxtSysRunning=26, kTxtSysOpenAgain=27, kTxtSysNoGateway=28,
+       kTxtSysRefused=29, kTxtSysNoAnswer=30 };
+const char* const kSysRc="/fs/ram3/nbt-reboot.rc";
+const char* const kSysLog="/fs/ram3/nbt-reboot.log";
+const char* const kSysTool="/var/opt/hmi/data/rw/NbtAndroidAutoRT/nbt_reset";
+const char* const kSysGatewayFile="/var/opt/hmi/data/rw/NbtAndroidAutoRT/gateway";
+const long kSysBootGuard=30, kSysAskWindow=120, kSysRepeatGuard=30;
+long g_sysAsk=-100000, g_sysLastRun=-100000;
+bmw::PluginApp* g_sysApp=0;
+void sysShow(unsigned text) { if(g_sysApp){bmw::TextID tx(text);g_sysApp->updateModel(kSysModel,tx);} }
+
+// first line of the gateway file, digits and dots only; empty if missing
+void sysGateway(char* out,size_t size) {
+    out[0]=0;
+    int fd=open(kSysGatewayFile,O_RDONLY);
+    if(fd<0)return;
+    char buf[32]; ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd);
+    if(n<=0)return;
+    size_t i=0;
+    while(i<(size_t)n&&i+1<size&&((buf[i]>='0'&&buf[i]<='9')||buf[i]=='.')){out[i]=buf[i];++i;}
+    out[i]=0;
+}
+
+bool sysRunReset() {
+    char gw[20]; sysGateway(gw,sizeof(gw));
+    int out=open(kSysLog,O_WRONLY|O_CREAT|O_APPEND,0644);
+    int nul=open("/dev/null",O_RDWR);
+    if(nul<0){if(out>=0)close(out);return false;}
+    int fdmap[3]={nul,out>=0?out:nul,out>=0?out:nul};
+    struct inheritance inh;
+    memset(&inh,0,sizeof(inh));
+    inh.flags=SPAWN_SETGROUP|SPAWN_SETSIGDEF|SPAWN_SETSIGMASK|SPAWN_NOZOMBIE;
+    inh.pgroup=SPAWN_NEWPGROUP;
+    sigfillset(&inh.sigdefault);
+    sigemptyset(&inh.sigmask);
+    // through /bin/sh only to get the exit code into kSysRc (gw: digits and dots only, see sysGateway)
+    char cmd[256];
+    snprintf(cmd,sizeof(cmd),"%s %s; echo $? > %s",kSysTool,gw,kSysRc);
+    char* argv[]={(char*)"/bin/sh",(char*)"-c",cmd,0};
+    // the HMI's own environment: its LD_LIBRARY_PATH finds libsocket.so.3 (car 2026-11-12: with PATH only, the loader
+    // failed with "Could not load library libsocket.so.3")
+    bool ok=spawn("/bin/sh",3,fdmap,&inh,argv,environ)>=0;
+    close(nul);
+    if(out>=0)close(out);
+    return ok;
+}
+
+// HMI thread: waits for nbt_reset's exit code and shows the result on page 34
+class SysPoll : public bmw::Runnable {
+public:
+    long started; bool active;
+    SysPoll():started(0),active(false) {}
+    void start() { started=mono_s(); if(!active&&g_sysApp){active=true;g_sysApp->post(this,500);} }
+    void run() {
+        active=false;
+        if(!g_sysApp)return;
+        int fd=open(kSysRc,O_RDONLY);
+        if(fd<0){
+            if(mono_s()-started<20){active=true;g_sysApp->post(this,500);return;}
+            plog("system restart: no result from nbt_reset within 20 s",0);
+            sysShow(kTxtSysNoAnswer);g_sysLastRun=-100000;
+            return;
+        }
+        char buf[8]; ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd);
+        int rc=n>0&&buf[0]>='0'&&buf[0]<='9'?buf[0]-'0':-1;
+        if(rc==0){plog("system restart: reset accepted",0);return;}     // the head unit restarts: "Restarting ..." stays
+        plog("system restart failed, nbt_reset exit",rc);
+        sysShow(rc==2?kTxtSysRefused:rc==3?kTxtSysNoAnswer:kTxtSysNoGateway);
+        g_sysLastRun=-100000;                                          // failed: a new attempt is allowed at once
+    }
+};
+SysPoll g_sysPoll;
+
+int g_sysHandlerObject=0;   // a null delegate object makes the HMI skip the handler (car 2026-11-12)
+bool sysAskFocus(void*,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    if(focused){g_sysAsk=mono_s();plog("system restart page focus",1);}
+    return true;
+}
+bool sysGoFocus(void*,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    if(!focused)return true;
+    const long t=mono_s();
+    if(t<kSysBootGuard){plog("system restart ignored: less than 30 s after boot",0);sysShow(kTxtSysTooEarly);return true;}
+    if(t-g_sysAsk>kSysAskWindow){plog("system restart ignored: page 33 not opened just before",0);sysShow(kTxtSysOpenAgain);return true;}
+    if(t-g_sysLastRun<kSysRepeatGuard){plog("system restart ignored: already started",0);sysShow(kTxtSysRunning);return true;}
+    g_sysLastRun=t;
+    plog("system restart requested, running nbt_reset",0);
+    sysShow(kTxtSysRestarting);
+    unlink(kSysRc);
+    if(!sysRunReset()){plog("system restart: could not start nbt_reset",0);sysShow(kTxtSysNoGateway);g_sysLastRun=-100000;return true;}
+    g_sysPoll.start();
+    return true;
+}
+
 Entry entry;
 bool created=false;
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
@@ -344,20 +651,33 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     bmw::ActionDelegate onEntry={&entry,&Entry::entryFocus};
     app->addHandler(kEntryState,kFocus,onEntry);
     entry.back.app=app;entry.shownMode=0;
+    entry.target.app=app;entry.target.e=&entry;entry.target.active=false;entry.target.target=kEntryState;
     bmw::ActionDelegate on169={&entry,&Entry::mode169Focus};
     bmw::ActionDelegate onWide={&entry,&Entry::modeWideFocus};
     app->addHandler(kMode169State,kFocus,on169);
     app->addHandler(kModeWideState,kFocus,onWide);
     bmw::ActionDelegate onRestart={&entry,&Entry::restartFocus};
     app->addHandler(kRestartState,kFocus,onRestart);
+    bmw::ActionDelegate onBoot={&entry,&Entry::bootFocus};
+    app->addHandler(kBootState,kFocus,onBoot);
+    entry.shownBoot=0;
     for(unsigned i=0;i<kHoldCount;++i){
         bmw::ActionDelegate onHold={&entry.slots[i],&Entry::holdFocus};
         bmw::ActionDelegate onHoldVisible={&entry.slots[i],&Entry::holdVisibility};
         app->addHandler(kHoldState+i,kFocus,onHold);
         app->addHandler(kHoldState+i,kVisible,onHoldVisible);  // type 11 = VISIBLE, as BMW's ActiveSeating registers it
     }
+    g_sysApp=app;
+    bmw::ActionDelegate onSysAsk={&g_sysHandlerObject,&sysAskFocus};
+    bmw::ActionDelegate onSysGo={&g_sysHandlerObject,&sysGoFocus};
+    app->addHandler(kSysAskState,kFocus,onSysAsk);
+    app->addHandler(kSysGoState,kFocus,onSysGo);
     created=true;
     touch(kHidden);   // nothing is shown before the page is opened
+    unlink(kShowRequest);                       // a request left from before this HMI start
+    plog("app start at create",app->start()?1:0);
+    entry.target.active=true;app->post(&entry.target,5000);   // show requests (Start at boot) before the page is opened
+    g_cds.app=app;app->post(&g_cds,3000);
     {
         pthread_attr_t at; pthread_t th;
         pthread_attr_init(&at); pthread_attr_setdetachstate(&at,PTHREAD_CREATE_DETACHED);
@@ -370,7 +690,7 @@ void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
     touch(kHidden);
-    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;
+    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.target.app=0;g_sysApp=0;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;

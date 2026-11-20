@@ -16,6 +16,8 @@
 #include "aa_video_capture.h"
 #include "aa_audio.hpp"
 #include "aa_session.hpp"
+#include "aa_media_out.hpp"
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -525,6 +527,23 @@ void video(uint32_t, const uint8_t* p, size_t n, uint64_t pts, void* v)
     save((Capture*)v, p, n, pts, false);
 }
 
+// Android Auto sound into the car (2026-11-18, aa_media_out.hpp): the service sets NBT_AA_MEDIA_OUT to the io-amp input
+// of the Android Auto audio source (input_stereo_1 = connection f6) and offers the media channel to the phone.
+void media_audio(uint8_t channel, const uint8_t* pcm, size_t len, uint64_t, void*)
+{
+    nbt::mediaout::onAudio(channel, pcm, len);
+}
+
+void media_state(uint8_t channel, bool started, uint32_t rate, uint32_t channels, void*)
+{
+    nbt::mediaout::onState(channel, started, rate, channels);
+}
+
+void media_consumed(uint8_t channel, size_t bytes, void* session)
+{
+    static_cast<nbt::AASession*>(session)->postAudioConsumed(channel, bytes);
+}
+
 // The phone asked for the screen back (car 2026-11-10: the "exit to car" icon in the Android Auto rail, picked with the
 // controller): it stops the video, our decoder ran dry ("stream inactive"), the service ended the session and the phone
 // refused the reconnect - the "connected but nothing works" drop-out. This head unit has no native screen to hand back
@@ -630,12 +649,38 @@ void stop_live(int)
 //
 // nbt_knob writes "R <key> <delta>" (rotary) / "K <key> <0|1>" (key up/down) lines into this FIFO.
 // Opened O_RDWR so the FIFO never reports EOF when nbt_knob is not running. Only the keys declared on input channel 7
-// are accepted: HOME 3, BACK 4, CALL 5, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538.
+// are accepted: HOME 3, BACK 4, CALL 5, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538, and the
+// media keys PLAY_PAUSE 85, NEXT 87, PREVIOUS 88 (steering wheel, 2026-11-12; all in the DHU template's keycodes_supported).
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
+
+// Car day/night for Android Auto's night mode (dark maps at night). This NBT has no day/night car data property, so the
+// headlights stand in: the HMI plugin writes CDS controls.headlights to this file as '{"headlights":N}'; 0 = day,
+// anything else = night. Returns 1 night, 0 day, -1 unknown (no file, or an error answer: keep what the phone has).
+const char* const kHeadlightsFile = "/fs/ram3/nbt-aa-headlights";
+int car_night()
+{
+    char b[96];
+    const int fd = open(kHeadlightsFile, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    const ssize_t n = read(fd, b, sizeof(b) - 1);
+    close(fd);
+    if (n <= 0)
+        return -1;
+    b[n] = 0;
+    const char* p = strstr(b, "\"headlights\":");
+    if (!p)
+        return -1;
+    p += 13;
+    if (*p < '0' || *p > '9')
+        return -1;
+    return atoi(p) != 0 ? 1 : 0;
+}
 
 bool allowed_key(unsigned k)
 {
-    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538;
+    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
+           k == 65536 || k == 65537 || k == 65538;
 }
 
 struct InputLines {
@@ -747,17 +792,45 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     nbt::AASession session;
     session.setVideoFrameCallback(video, &c);
     session.setCodecConfigCallback(config, &c);
+    bool media_audio_started = false;
     if (c.live) {
         session.setNavStatusCallback(nav_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         g_refocus_at = 0;
         session.setVideoFocusCallback(focus_request, 0);
+        const char* media_out = getenv("NBT_AA_MEDIA_OUT");
+        if (media_out && *media_out) {
+            nbt::mediaout::setConsumedCallback(media_consumed, &session);
+            if (nbt::mediaout::start(media_out)) {
+                media_audio_started = true;
+                // acks once played: the phone sends at the speed the car plays (no queue growing, no cuts)
+                session.setDeferredAudioAcks(true);
+                session.setAudioFrameCallback(media_audio, 0);
+                session.setAudioStateCallback(media_state, 0);
+                printf("AA_MEDIA_OUT Android Auto sound -> %s\n", media_out);
+            } else {
+                printf("AA_MEDIA_OUT not available: no Android Auto sound in the car this session\n");
+                FILE* f = fopen("/fs/ram3/nbt-aa-native/audio-output.failed", "w");
+                if (f) { fprintf(f, "A2I media output not loaded\n"); fclose(f); }
+                else perror("AA_MEDIA_OUT cannot record output failure");
+            }
+        }
     }
-    const bool audio = c.live && aa_audio::setup(session);
+    const char* configured_media_out = getenv("NBT_AA_MEDIA_OUT");
+    const bool audio = media_audio_started ||
+                       (c.live && (!configured_media_out || !*configured_media_out) && aa_audio::setup(session));
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
+    // Day/night before the session starts: the phone asks for the NIGHT_MODE sensor early and gets this value
+    int night_posted = c.live ? car_night() : -1;
+    if (night_posted >= 0) {
+        session.postNightMode(night_posted != 0);
+        printf("AA_NIGHT car is in %s mode at session start\n", night_posted ? "night" : "day");
+    }
+    long long next_night_check = 0;
     printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=%d\n",
            seconds, c.frame_limit, audio ? 0 : 1);
     if (!session.start(pair[0])) {
+        nbt::mediaout::stop();
         aa_audio::shutdown();
         close(pair[1]);
         close(c.data);
@@ -768,6 +841,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     bool have_writer = false;
     if (c.live) {
         if (pthread_create(&writer, 0, live_writer, &c)) {
+            nbt::mediaout::stop();
             session.stop();
             aa_audio::shutdown();
             close(pair[1]);
@@ -784,6 +858,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             pthread_mutex_unlock(&c.queue.m);
             pthread_join(writer, 0);
         }
+        nbt::mediaout::stop();
         session.stop();
         aa_audio::shutdown();
         close(pair[1]);
@@ -833,6 +908,15 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             session.postVideoFocus(true);
             printf("AA_FOCUS projection given back to the phone\n");
         }
+        if (!bye_until && c.live && now_ms() >= next_night_check) {
+            next_night_check = now_ms() + 1000;
+            const int n = car_night();
+            if (n >= 0 && n != night_posted) {
+                night_posted = n;
+                session.postNightMode(n != 0);
+                printf("AA_NIGHT car switched to %s mode: Android Auto %s\n", n ? "night" : "day", n ? "dark" : "light");
+            }
+        }
         if (!bye_until && bg_focus && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;
             const int visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
@@ -872,6 +956,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (bye_until)
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
+    nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in
     if (c.live)

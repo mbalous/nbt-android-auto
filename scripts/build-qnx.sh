@@ -49,7 +49,7 @@ ntox86-ar rcs libnbt_aa_core.a core/aa_session.o core/aa_cryptor.o core/audio_ac
 echo "== nbt_android_auto (USB/AOA + TLS + Android Auto session)"
 cd $A
 $CC -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c nbt_android_auto.c -o $W/nbt_android_auto.o
-$CXX $AAINC aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
+$CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
   -lsocket -lm -lusbdi -o $OUT/nbt_android_auto
 
 echo "== native_service, decode_runner, fifo_http, accessory_window"
@@ -65,6 +65,10 @@ $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_hw
 $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_cluster -lm
 # audioconn replacement for the original NBT (ConnectionMaster FBlock 03 build/remove of connection 0xb8)
 $CXX -Iref nbt_audioconn.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/audioconn
+$CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_key
+
+echo "== nbt_a2i_beep (test: beeps into an io-amp input)"
+$CC -Wall $A/audio/nbt_a2i_beep.c -o $OUT/nbt_a2i_beep -lm
 
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
@@ -74,6 +78,10 @@ if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so;
 else
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
 fi
+
+echo "== nbt_reset (Restart system on the Android Auto page)"
+cd $W/src/idrive/reboot
+$CC -O2 -Wall -Wextra nbt_reset.c -lsocket -o $OUT/nbt_reset
 
 cd $W
 echo "== built"

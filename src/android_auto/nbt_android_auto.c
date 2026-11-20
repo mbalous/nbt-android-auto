@@ -10,6 +10,9 @@
  * --tls-inspect adds one fresh ClientHello, records the public server flight,
  * then closes. It never completes TLS or sends AUTH_COMPLETE/application data.
  * No SET_AUDIO_MODE, reset, configuration change, driver stop or retry.
+ * --reset (2026-11-12) is the one exception: usbd_reset_device() on the given device, the software version of pulling
+ * the cable (native_service after a failed attempt). The phone's identity: NBT_PHONE_ID, or the accessory ids when
+ * NBT_RESET_AOA=1. usbd_reset_device is looked up at run time, so an io-usb without it only fails the reset.
  */
 #include <sys/usbdi.h>
 #include <pthread.h>
@@ -20,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <dlfcn.h>
 #ifdef NBT_AA_CAPTURE
 #include "aa_video_capture.h"
 #endif
@@ -35,12 +39,11 @@ struct tls_usb_context {
 static int window_active(void) {
     static const char* const paths[] = {
         "/opt/mm/bin/aoap-switch", "/fs/sda0/opt/mm/bin/aoap-switch",
-        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap",
-        "/opt/share/bin/io-fs-media", "/fs/sda0/opt/share/bin/io-fs-media"
-    };
+        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap"
+    };   /* the paths accessory_window always covers (io-fs-media no longer: car 2026-11-12, Bluetooth audio) */
     unsigned i;
     if (geteuid() != 0) return 0;
-    for (i = 0; i < 6; ++i) {
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         int fd = open(paths[i], O_RDONLY);
         if (fd >= 0) { close(fd); return 0; }
         if (errno != EACCES) return 0;
@@ -125,15 +128,17 @@ static int await_completion(struct completion* c, unsigned milliseconds) {
     pthread_mutex_unlock(&c->mutex);
     return done;
 }
-static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
-                         unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
+/* timeout_ms: usbd_io timeout of the transfer; the completion is awaited 1 s longer (2000 everywhere, except the session's
+ * bulk IN reads, see capture_transfer) */
+static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
+                         unsigned size, int input, _Uint32t* status, _Uint32t* actual, unsigned timeout_ms) {
     struct completion c;
     int rc;
     memset(&c, 0, sizeof(c));
     pthread_mutex_init(&c.mutex, NULL); pthread_cond_init(&c.condition, NULL);
     rc = usbd_setup_bulk(urb, input ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, buffer, size);
-    if (rc == EOK) rc = usbd_io(urb, pipe, completed, &c, 2000);
-    if (rc == EOK && !await_completion(&c, 3000)) {
+    if (rc == EOK) rc = usbd_io(urb, pipe, completed, &c, timeout_ms);
+    if (rc == EOK && !await_completion(&c, timeout_ms + 1000)) {
         puts("AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
         usbd_abort_pipe(pipe);
         if (!await_completion(&c, 1000)) {
@@ -146,6 +151,10 @@ static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned 
     *status = c.status; *actual = c.actual;
     pthread_cond_destroy(&c.condition); pthread_mutex_destroy(&c.mutex);
     return rc;
+}
+static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
+                         unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
+    return bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, 2000);
 }
 static void* signal_test_completion(void* context) {
     struct completion* c = (struct completion*)context;
@@ -162,11 +171,18 @@ struct capture_usb {
 };
 static int capture_transfer(void* context,int input,unsigned char* data,unsigned* size) {
     struct capture_usb* c=(struct capture_usb*)context;
-    _Uint32t status,actual;int rc;
+    _Uint32t status=0,actual=0;int rc;
     if(input<0 || input>1 || !*size || *size>65536)return 0;
     if(!input)memcpy(c->dma[0],data,*size);
-    rc=bulk_transfer(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual);
-    if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size)return 0;
+    /* Session reads (car 2026-11-17: a session ended with "Phone closed socket or read error" after 94 s of normal
+     * streaming, no RX-timeout message): a bulk IN read gave up after 2 s without data, which ended the reader and the
+     * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
+     * logged with its USB status, so a real USB drop can be told from a pause. */
+    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,input?8000:2000);
+    if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size){
+        printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u\n",input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual);
+        return 0;
+    }
     if(input)memcpy(data,c->dma[1],actual);
     *size=actual;return 1;
 }
@@ -313,7 +329,7 @@ int main(int argc, char** argv) {
     unsigned char* buffer = NULL;
     usbd_device_instance_t instance;
     _Uint32t actual;
-    int bus, dev, switching, versioning = 0, inspecting = 0, rc, result = 3;
+    int bus, dev, switching, versioning = 0, inspecting = 0, resetting = 0, rc, result = 3;
     unsigned matches, removed_already, protocol, i;
     static const char* const identity[] = {
         "Android", "Android Auto", "Android Auto", "2.0.1", "", "NBT-AA-TEST"
@@ -349,9 +365,10 @@ int main(int argc, char** argv) {
         (inspecting = !strcmp(argv[1], "--tls-handshake") ? 2 : 0) == 0 &&
 #endif
         (inspecting = !strcmp(argv[1], "--tls-inspect")) == 0 &&
-        (versioning = !strcmp(argv[1], "--version")) == 0 && strcmp(argv[1], "--query")) ||
+        (versioning = !strcmp(argv[1], "--version")) == 0 && (resetting = !strcmp(argv[1], "--reset")) == 0 &&
+        strcmp(argv[1], "--query")) ||
         (bus = number(argv[2])) < 0 || (dev = number(argv[3])) < 1) {
-        fputs("Usage: nbt_android_auto --query|--switch-aa|--version|--tls-inspect bus device\n", stderr); return 2;
+        fputs("Usage: nbt_android_auto --query|--switch-aa|--version|--tls-inspect|--reset bus device\n", stderr); return 2;
     }
     alarm(inspecting==4 ? (getenv("NBT_AA_LIVE_FIFO") ? 0 : 75) : 20); setvbuf(stdout, NULL, _IOLBF, 0);
     if ((switching || versioning || inspecting) && !window_active()) {
@@ -368,7 +385,7 @@ int main(int argc, char** argv) {
         const char *id = getenv("NBT_PHONE_ID"), *aoa = getenv("NBT_AOA_PRODUCT");
         unsigned v, p;
         if (id && sscanf(id, "%4x:%4x", &v, &p) == 2 && v && p) { target_vendor = v; target_product = p; }
-        if (versioning || inspecting) {
+        if (versioning || inspecting || (resetting && getenv("NBT_RESET_AOA"))) {
             target_vendor = 0x18d1;
             target_product = aoa && !strcmp(aoa, "2d01") ? 0x2d01 : 0x2d00;
         }
@@ -392,6 +409,16 @@ int main(int argc, char** argv) {
     rc = usbd_attach(connection, &instance, 0, &device);
     if (rc != EOK) { device = NULL; printf("AOA_ATTACH_FAILED code=%d\n", rc); goto done; }
     if (versioning || inspecting) { result = version_probe(device, &instance, inspecting); goto done; }
+    if (resetting) {
+        void* self = dlopen(NULL, RTLD_NOW);
+        int (*reset_device)(struct usbd_device*) =
+            self ? (int (*)(struct usbd_device*))dlsym(self, "usbd_reset_device") : NULL;
+        if (!reset_device) { puts("USB_RESET_UNAVAILABLE"); result = 5; goto done; }
+        rc = reset_device(device);
+        printf("USB_RESET rc=%d %04x:%04x bus=%u device=%u\n", rc, target_vendor, target_product, target_bus, target_device);
+        result = rc == EOK ? 0 : 5;
+        goto done;
+    }
     descriptor = usbd_parse_descriptors(device, NULL, USB_DESC_DEVICE, 0, &node);
     if (!descriptor || usbd_open_pipe(device, descriptor, &pipe) != EOK) { pipe = NULL; goto done; }
     urb = usbd_alloc_urb(NULL); buffer = (unsigned char*)usbd_alloc(256);

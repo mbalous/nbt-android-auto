@@ -2,7 +2,8 @@
 Usage: python installer/make_payload.py [version] --built build/qnx-build-<time> [--pem-dir <folder>]
 The payload contains binaries and the head-unit TLS identity; it is not committed (see .gitignore) but bundled into the
 release builds. Rebuild libNbtAndroidAuto.so in the QNX VM after any change to src/idrive/aa_entry_plugin.cpp first.
---built takes the programs and plugin files from a scripts/build_all.py run;
+--built takes the programs and plugin files from a scripts/build_all.py run instead of the developer's build folders,
+plus nbt_reset ("Restart system" on the Android Auto page);
 the PEM files (public NBT-AAD head-unit identity) then come from --pem-dir (default: rt/ of an existing payload,
 e.g. unpacked from a release ZIP).
 """
@@ -56,6 +57,9 @@ def built_files(built, pem_dir):
         else:
             source = programs / leaf
         result.append((source, name, target, mode))
+    # "Restart system" on the Android Auto page (src/idrive/reboot); the car-specific "gateway" file next to it is left as
+    # it is on the car
+    result.append((programs / 'nbt_reset', 'rt/nbt_reset', RT + '/nbt_reset', '700'))
     return result
 
 
