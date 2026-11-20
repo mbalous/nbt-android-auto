@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <sys/stat.h>
 #ifdef NBT_OPEN_TOOLCHAIN
 #include "qnx_spawn_compat.h"   // the open sysroot has no <spawn.h>
@@ -80,6 +81,7 @@ const char* const kRequest="/fs/ram3/nbt-aa-request";
 const char* const kHidden="/fs/ram3/nbt-aa-hidden";
 const char* const kState="/fs/ram3/nbt-aa-state";
 const char* const kLeave="/fs/ram3/nbt-aa-leave";
+const char* const kExitToIdrive="/fs/ram3/nbt-aa-exit-to-idrive";
 // BACK (car 2026-11-17): iDrive's BACK goes back in iDrive's history, also from the deepest hold level (log: "hold focus
 // 0, level 7" -> "page left", never level 6), so it left Android Auto while the phone went back as well. nbt_knob writes
 // this flag on the driver's BACK while the picture is on screen; when the page is left within 2 s of it, the Checker
@@ -321,6 +323,23 @@ public:
 CdsSubscribe g_cds;
 // HMI thread, every 250 ms once started: the entry's target (model 5) follows the service state; show requests
 const unsigned kTargetModel=5;
+bool takeExitRequest(long long* deadline) {
+    int fd=open(kExitToIdrive,O_RDONLY);
+    if(fd<0){if(errno!=ENOENT)plog("exit to iDrive: cannot open request",errno);return false;}
+    char buf[40];
+    ssize_t n=read(fd,buf,sizeof(buf)-1);
+    int readError=errno;
+    close(fd);
+    if(unlink(kExitToIdrive)!=0){plog("exit to iDrive: cannot remove request",errno);return false;}
+    if(n<=0){plog("exit to iDrive: cannot read request",n<0?readError:0);return false;}
+    buf[n]=0;
+    char extra;
+    if(sscanf(buf,"%lld %c",deadline,&extra)!=1||*deadline<=now_ms()+1000){
+        plog("exit to iDrive: invalid or expired request",0);
+        return false;
+    }
+    return true;
+}
 class TargetPoll : public bmw::Runnable {
 public:
     bmw::PluginApp* app; Entry* e; bool active; int target;
@@ -341,7 +360,7 @@ public:
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),lastGuardReset(-1000),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),lastGuardReset(-1000),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0),exitPending(false),exitDeadlineMs(0),exitRetryMs(0),exitUses(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -354,6 +373,7 @@ public:
     // counted=false: a show request and its one follow-up (NAV key, parking assistant, AUX): one per driver action, so
     // they do not use up the loop guard (car 2026-11-18: a few NAV presses -> "refused by loop guard" for a minute)
     void hold(const char* why,bool counted=true) {
+        if(exitPending){plog("hold skipped: iDrive handoff pending");return;}
         // review 2026-11-09: on every entry with Android Auto running the checker (+30 ms) and the status poll (+50 ms)
         // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
         // first ignored event was exactly such a pair. One event per second at most.
@@ -402,7 +422,7 @@ public:
         plog("entry focus",focused);
         if(focused)g_entrySeen=true;
         if(focused&&!e->stopping){
-            unlink(kLeave);                    // the driver came back on purpose
+            if(!e->exitPending)unlink(kLeave);  // the driver came back on purpose
             touch(kRequest);
             // User report 2026-11-19: "shows connected but does not open when clicking Android Auto". After popups /
             // side panels the 10-per-minute loop guard was used up and refused every hold, also the one the driver asked
@@ -460,6 +480,15 @@ public:
     // no retry (car 2026-11-18: retrying the retry sent an event every 1.26 s for as long as iDrive ignored them all).
     long long showRetryAtMs;
     unsigned evIdx,evUses,evIgnoredSeen;   // focus event pool (kEvPoolFirst..): current event, its uses, ignoredHolds seen
+    bool exitPending;
+    long long exitDeadlineMs,exitRetryMs;
+    unsigned exitUses;
+    void exitHome() {
+        if(exitUses>=100){plog("exit to iDrive: focus event pool exhausted",0);return;}
+        const unsigned ev=720+(exitUses++%10);
+        plog("exit to iDrive: main menu focus event",(int)ev);
+        app->triggerEvent(ev);
+    }
     void showHold(const char* why,bool retry=true) {
         const long long before=lastHoldMs;
         hold(why,false);
@@ -472,7 +501,7 @@ public:
         e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
         e->target.start();
-        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
+        if(focused&&!e->exitPending){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)
         return true;
     }
@@ -489,15 +518,42 @@ void TargetPoll::run() {
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
+    long long exitDeadline=0;
+    if(takeExitRequest(&exitDeadline)){
+        if(!running||access(kHidden,F_OK)==0)plog("exit to iDrive ignored: projection not visible",0);
+        else if(!e->exitPending){
+            int fd=open(kLeave,O_WRONLY|O_CREAT|O_TRUNC,0644);
+            if(fd<0)plog("exit to iDrive: cannot write leave flag",errno);
+            else{
+                close(fd);
+                unlink(kShowRequest);unlink(kBackKey);
+                e->showUntilMs=0;e->showRetryAtMs=0;g_pdcFromAa=false;
+                const long long tm=now_ms();
+                e->exitPending=true;e->exitRetryMs=tm+1100;
+                e->exitDeadlineMs=exitDeadline-500<tm+3000?exitDeadline-500:tm+3000;
+                e->exitHome();
+                if(!e->holdFocused())e->check(150);
+            }
+        }
+    }
     if(unlink(kShowRequest)==0){
         // NAV (car 2026-11-18): iDrive opens its navigation ~1.3 s after the key, after the show request has already
         // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
         // Android Auto) it always did. For 4 s the Checker takes the focus back once more.
+        if(e->exitPending){e->exitPending=false;unlink(kLeave);plog("exit to iDrive cancelled by show request",0);}
         if(running)e->showUntilMs=now_ms()+4000;
         unlink(kLeave);                    // an iDrive key from before this request (written also while hidden)
         if(!running)plog("show request ignored: Android Auto not running",0);
         else if(e->holdFocused())plog("show request: already on screen",0);
         else e->showHold("show request");
+    }
+    if(e->exitPending&&now_ms()>=e->exitDeadlineMs){
+        e->exitPending=false;unlink(kLeave);
+        plog("exit to iDrive failed: HMI did not leave the hold state",0);
+    }else if(e->exitPending&&e->exitRetryMs&&now_ms()>=e->exitRetryMs){
+        e->exitRetryMs=0;
+        if(e->holdFocused())e->exitHome();
+        else e->check(0);
     }
     if(e->showRetryAtMs&&now_ms()>=e->showRetryAtMs){
         e->showRetryAtMs=0;
@@ -515,7 +571,7 @@ void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
-    if(unlink(kLeave)==0){plog("check: leave key");g_pdcFromAa=false;touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
+    if(e->exitPending||unlink(kLeave)==0){unlink(kLeave);e->exitPending=false;plog("check: leave iDrive page");g_pdcFromAa=false;touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
     {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
         // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
         struct stat st;
@@ -705,6 +761,7 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     touch("/fs/ram3/nbt-aa-plugin-loaded");
     touch(kHidden);   // nothing is shown before the page is opened
     unlink(kShowRequest);                       // a request left from before this HMI start
+    unlink(kExitToIdrive);
     plog("app start at create",app->start()?1:0);
     entry.target.active=true;app->post(&entry.target,5000);   // show requests (Start at boot) before the page is opened
     g_cds.app=app;app->post(&g_cds,3000);
@@ -731,5 +788,7 @@ struct PluginAppInfo {
     bmw::IPluginApp*(*create)(bmw::IDispatcher&,const char*,const bmw::Bundle&,const bmw::Bundle&);
     void(*destroy)(bmw::IPluginApp*);
 };
+#ifndef NBT_HOST_TEST
 typedef char InfoSize[(sizeof(PluginAppInfo)==20)?1:-1];
+#endif
 extern "C" { PluginAppInfo pluginAppInfo={1,0,"NbtAndroidAuto","NBT-Project",create,destroy}; }
