@@ -38,7 +38,7 @@ for c in aa_session aa_cryptor audio/audio_acks sdr_builder crash_handler; do
   $CXX $AAINC -c reference/src/$c.cpp -o core/`basename $c`.o
 done
 # browser audio mode (Android Auto sound over the AA connection, off unless the aa-audio mode file exists)
-for c in browser_audio asound_device audio_route mixer resampler drift config stream_rate pcm_ring playout; do
+for c in browser_audio asound_device audio_route mixer resampler drift config stream_rate pcm_ring playout speech_focus; do
   $CXX $AAINC -c reference/src/audio/$c.cpp -o core/audio_$c.o
 done
 $CC -O1 -I$W/reference/src -c reference/src/audio/speex.c -o core/audio_speex.o   # vendored speexdsp resampler

@@ -17,7 +17,7 @@ import uuid
 from aa_session_overlay import harden_session
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = "41975f269b065dbdbc77af9f568387cd22b9ed27"
+REVISION = "4328560e33d622243b68e8e1bb0766180fd954e5"
 
 
 def run(args, **kwargs):
@@ -157,7 +157,7 @@ static int endedAdd(int value) {
     components = ["aa_session", "aa_cryptor", "audio/audio_acks", "sdr_builder", "crash_handler"]
     # browser audio mode, as in build-qnx.sh (objects named audio_<name>.o there and here)
     audio = ["browser_audio", "asound_device", "audio_route", "mixer", "resampler", "drift", "config", "stream_rate",
-             "pcm_ring", "playout"]
+             "pcm_ring", "playout", "speech_focus"]
     for component in components:
         commands.append(cxx + " -c reference/src/" + component + ".cpp -o objects/" + Path(component).name + ".o")
     for name in audio:

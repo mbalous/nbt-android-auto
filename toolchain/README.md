@@ -29,7 +29,7 @@ python3 scripts/build_open.py --reuse <installer payload folder>
 python3 installer/make_payload.py <version> --built build/open-build-<time>-<id> --pem-dir <payload>/rt
 ```
 
-`build_open.py` prepares the sources exactly like `build_all.py` (NBT-AAD at 41975f2, overlay, patches, Mbed TLS
+`build_open.py` prepares the sources exactly like `build_all.py` (NBT-AAD at 4328560, overlay, patches, Mbed TLS
 3.6.7). It then runs [`scripts/build-open.sh`](../scripts/build-open.sh), which uses the same flags as
 `build-qnx.sh`. The open build uses link-only HMI stubs for the plugin. One component is not built and must be
 taken from an existing payload with `--reuse`:

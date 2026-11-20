@@ -51,7 +51,8 @@ bool setup(nbt::AASession& session)
         printf("AA_AUDIO off (Bluetooth; NBT_AUDIO_MODE=%s)\n", nbt::audioModeName(nbt::audioMode()));
         return false;
     }
-    const nbt::BrowserConfig cfg = nbt::readBrowserConfig();
+    nbt::BrowserConfig cfg = nbt::readBrowserConfig();
+    cfg.speech.enabled = false; // original HU_NBT keeps guidance in the browser mix (no Evo /input_mono_0 nav prompter)
     g_audio = new nbt::BrowserAudio();
     if (!g_audio->init(cfg)) {
         printf("AA_AUDIO WARNING: A2I output (liba2i_client) not loaded: Android Auto audio will be silent\n");
@@ -128,3 +129,25 @@ bool nbt::MicUplink::start()
 }
 
 void nbt::A2ICaptureStream::stop() {}
+
+// BrowserAudio owns a SpeechOut member for NBT Evo's separate nav prompter (/input_mono_0, which uses A2IPlaybackStream
+// and links liba2i_client directly). Original HU_NBT keeps guidance in the browser mix, so stub SpeechOut here too.
+nbt::SpeechOut::SpeechOut(AudioRoute& route) : route_(route), focus_(*this) {}
+nbt::SpeechOut::~SpeechOut() {}
+void nbt::SpeechOut::init(const SpeechConfig&) {}
+bool nbt::SpeechOut::takesPrompt(uint64_t) const { return false; }
+void nbt::SpeechOut::frame(const uint8_t*, size_t) {}
+void nbt::SpeechOut::state(bool, uint32_t, uint32_t) {}
+bool nbt::SpeechOut::active() const { return false; }
+void nbt::SpeechOut::onSessionEnded() {}
+bool nbt::SpeechOut::stop() { return false; }
+bool nbt::SpeechOut::queueBuild() { return false; }
+bool nbt::SpeechOut::queueRemove() { return false; }
+void nbt::SpeechOut::cancelPending() {}
+void nbt::SpeechOut::setFeed(bool) {}
+void nbt::SpeechOut::flush() {}
+size_t nbt::SpeechOut::queuedBytes() const { return 0; }
+void nbt::SpeechOut::setFocusBusy(bool, uint64_t) {}
+void nbt::SpeechOut::openEndpoint() {}
+void nbt::SpeechOut::closeEndpoint() {}
+uint32_t nbt::SpeechOut::endpointWrites() const { return 0; }

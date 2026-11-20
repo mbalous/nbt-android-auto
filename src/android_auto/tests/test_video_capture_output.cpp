@@ -20,6 +20,12 @@ namespace {
 const uint8_t kConfig[] = {0, 0, 0, 1, 0x67, 0x42, 0, 0x1f, 0, 0, 0, 1, 0x68, 0xab};
 const uint8_t kFrame[] = {0, 0, 0, 1, 0x41, 0xaa};
 
+void feed_video(const uint8_t* p, size_t n, uint64_t pts, Capture* c)
+{
+    std::vector<uint8_t> buf(p, p + n);
+    video(0, buf, 0, n, pts, c);
+}
+
 void require(bool ok, const char* message)
 {
     if (!ok) {
@@ -56,10 +62,10 @@ void test_diagnostic_capture()
     c.data = data[1];
     c.index = index[1];
     config(kConfig, sizeof(kConfig), &c);
-    video(0, kFrame, sizeof(kFrame), 42, &c);
+    feed_video(kFrame, sizeof(kFrame), 42, &c);
     require(!c.error, "capture rejected valid media");
     const uint8_t invalid[] = {0xff, 0, 0, 1, 0x41, 0xaa};
-    video(0, invalid, sizeof(invalid), 43, &c);
+    feed_video(invalid, sizeof(invalid), 43, &c);
     require(c.error, "capture accepted non-Annex-B media");
 
     close(data[1]);
@@ -99,16 +105,16 @@ void test_padded_queue_budget()
     const size_t tail = kLiveBudget - large - 12;
     std::vector<uint8_t> frame(large, 0xaa);
     memcpy(frame.data(), kFrame, sizeof(kFrame));
-    video(0, frame.data(), large, 1, &c);
-    video(0, frame.data(), tail, 2, &c);
+    feed_video(frame.data(), large, 1, &c);
+    feed_video(frame.data(), tail, 2, &c);
 
     // Twelve bytes remain: a six-byte frame fits only without its 24-byte padded size.
-    video(0, kFrame, sizeof(kFrame), 3, &c);
+    feed_video(kFrame, sizeof(kFrame), 3, &c);
     require(c.queue.bytes == large + tail && c.queue.dropping && c.queue.dropped == 1,
             "drop dependent frame that only fits before padding");
 
     const uint8_t idr[] = {0, 0, 0, 1, 0x65, 0xaa};
-    video(0, idr, sizeof(idr), 4, &c);
+    feed_video(idr, sizeof(idr), 4, &c);
     require(!c.queue.dropping && c.queue.dropped == 2 && c.queue.items.size() == 2 &&
             c.queue.bytes == tail + 24 && c.queue.items.back()[4] == 0x65,
             "evict enough backlog to queue the padded keyframe within budget");
@@ -119,7 +125,7 @@ void test_live_stream()
     Capture c;
     c.live = true;
     config(kConfig, sizeof(kConfig), &c);
-    video(0, kFrame, sizeof(kFrame), 42, &c);
+    feed_video(kFrame, sizeof(kFrame), 42, &c);
     require(c.frames == 1 && c.received == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
             "live summary counts source frames, configs and unpadded bytes");
 
@@ -139,11 +145,11 @@ void test_live_recovery()
     // Hold off the writer so the second large dependent frame overflows the queue.
     std::vector<uint8_t> frame(2 * 1024 * 1024, 0xaa);
     memcpy(frame.data(), kFrame, sizeof(kFrame));
-    video(0, frame.data(), frame.size(), 1, &c);
-    video(0, frame.data(), frame.size(), 2, &c);
-    video(0, kFrame, sizeof(kFrame), 3, &c);
+    feed_video(frame.data(), frame.size(), 1, &c);
+    feed_video(frame.data(), frame.size(), 2, &c);
+    feed_video(kFrame, sizeof(kFrame), 3, &c);
     frame[4] = 0x65;
-    video(0, frame.data(), frame.size(), 4, &c);
+    feed_video(frame.data(), frame.size(), 4, &c);
     require(c.frames == 4 && c.bytes == 3 * frame.size() + sizeof(kFrame),
             "live source count includes frames dropped by the queue");
     expect_live_output(c, frame);

@@ -14,7 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/android_auto"
 REFERENCE = Path(os.environ.get("NBT_AAD_REFERENCE", ROOT / ".local/reference-nbt-aad")).resolve()
-REVISION = "41975f269b065dbdbc77af9f568387cd22b9ed27"
+REVISION = "4328560e33d622243b68e8e1bb0766180fd954e5"
 
 
 def run(args, **kwargs):

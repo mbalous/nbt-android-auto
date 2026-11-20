@@ -1,20 +1,25 @@
 diff --git a/milestone-7/src/audio/browser_audio.cpp b/milestone-7/src/audio/browser_audio.cpp
 --- a/milestone-7/src/audio/browser_audio.cpp
 +++ b/milestone-7/src/audio/browser_audio.cpp
-@@ -419,4 +419,5 @@
+@@ -477,8 +477,9 @@ bool BrowserAudio::mediaOnSource(uint64_t now) {   // session thread (it writes
+ }
+ 
  void BrowserAudio::setMediaGain(float g) {
 -    // Ramped inside the mixer (per frame, ~50 ms), so this is safe from the UI thread while the mixer thread runs.
 +    pthread_mutex_lock(&lock_);
      mixer_.setMediaGain(g);
 +    pthread_mutex_unlock(&lock_);
  }
-@@ -744,7 +745,9 @@ void BrowserAudio::mixerLoop() {
+ 
+ void BrowserAudio::refocus(const char* why) {
+@@ -805,8 +806,10 @@ void BrowserAudio::mixerLoop() {
          }
          const bool duck = loud[GUIDANCE] || loud[SYSTEM];
+         // A prompt on the nav prompt channel ducks media too, but must not hold the browser source.
 +        pthread_mutex_lock(&lock_);
          mixer_.mix(have[MEDIA] ? &in[MEDIA][0] : NULL, have[GUIDANCE] ? &in[GUIDANCE][0] : NULL,
-                    have[SYSTEM] ? &in[SYSTEM][0] : NULL, block, duck, &out[0]);
+                    have[SYSTEM] ? &in[SYSTEM][0] : NULL, block, duck || speech_.active(), &out[0]);
 +        pthread_mutex_unlock(&lock_);
          if (loud[MEDIA] || duck) last_sound_ms_ = now;
-         if (loud[MEDIA] || stream_[MEDIA].in.started) last_media_ms_ = now;
-         const bool ducking = mixer_.ducking();
+         if (loud[MEDIA] || stream_[MEDIA].in.started) {   // under lock_: the session thread reads it (mediaOnSource)
+             pthread_mutex_lock(&lock_);
