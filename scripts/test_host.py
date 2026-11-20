@@ -44,6 +44,8 @@ def main():
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
              ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
             ("src/android_auto/tests/test_fifo_http.cpp", [], ["-pthread"]),
+            ("src/idrive/test_exit_handoff.cpp", [str(work)],
+             ["-pthread", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections"]),
             ("src/android_auto/knob/tests/test_prompt_route.cpp", [str(work)],
              ["-pthread", "-ffunction-sections", "-Wl,--gc-sections",
               "-I", str(ROOT / "src/android_auto/knob/ref")]),

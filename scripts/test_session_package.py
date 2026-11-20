@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from unittest import mock
+import xml.etree.ElementTree as ET
 
 import build_all
 
@@ -27,6 +28,18 @@ installer = load_module("nbt_aa_installer", "installer/nbt_aa_installer.py")
 
 
 class SessionPackageTests(unittest.TestCase):
+    def test_exit_focus_events_target_native_main_menu(self):
+        root = ET.parse(ROOT / "src/idrive/NbtAndroidAuto.xml").getroot()
+        model = root.find(".//raIntModel[@id='96']")
+        self.assertIsNotNone(model)
+        self.assertEqual((model.get("modelType"), model.get("value")), ("NativeStateID", "1"))
+        for event_id in range(720, 730):
+            events = root.findall(".//focusEvent[@id='%d']" % event_id)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].get("targetModel"), "96")
+            self.assertEqual(sum(node.get("id") == str(event_id) for node in root.iter()
+                                 if node.tag != "property"), 1)
+
     def test_build_package_and_runtime_use_same_executable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

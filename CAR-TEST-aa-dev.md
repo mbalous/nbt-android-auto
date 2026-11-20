@@ -155,6 +155,8 @@ iDrive side panel; after leaving Android Auto, the same tilt must work normally 
 | 5 | Source compatibility | Use volume / sources as usual. | No unexpected rear-audio warnings or radio muting |
 | 6 | AA exits, audio keeps playing | Drive normally, popups/PDC etc. | Note time if it happens |
 | 7 | "Connected" but won't open | Use AA a long time, many popups; then Multimedia → Android Auto. | Opens (focus-event pool: iDrive ignored each focus event after 11 uses) |
+| 7a | BMW icon does not return to iDrive | While parked, select the BMW icon, use iDrive, then reopen AA via Multimedia; repeat. | iDrive remains visible; AA stays connected and reopens with video and working controls. |
+| 7b | BMW icon and parking assistant | Leave AA with the BMW icon, then test the parking assistant. | iDrive stays in front after the parking view closes. |
 | 8 | iDrive reboot | — | If it happens, logs now survive the reboot |
 | 10 | Bluetooth / radio sound after AA | Use AA, then switch to Bluetooth audio or radio. | Sound plays (decoder no longer mutes io-nme) |
 | 11 | Night mode | Headlights on. | Android Auto / Maps go dark |
