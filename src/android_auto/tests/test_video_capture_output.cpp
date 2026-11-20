@@ -149,6 +149,50 @@ void test_live_recovery()
     expect_live_output(c, frame);
 }
 
+void test_focus_handoff()
+{
+    char path[] = "/tmp/nbt-focus-test-XXXXXX";
+    int fd = mkstemp(path);
+    require(fd >= 0, "create focus test path");
+    close(fd);
+    unlink(path);
+
+    Capture c;
+    focus_request(true, 1, &c);
+    require(!c.native_focus_pending, "projected focus must not request iDrive");
+    focus_request(false, 1, &c);
+    require(c.native_focus_pending, "native focus callback must queue a handoff");
+
+    FocusHandoff h;
+    int shown = 1;
+    require(!h.request(1000, true, path) && access(path, F_OK) == 0, "request iDrive");
+    require(!h.request(1100, true, path), "repeated request while pending");
+    require(!h.tick(1500, true, false, shown, path), "do not refocus before iDrive is visible");
+    require(!h.tick(1600, false, false, shown, path), "wait for overlay to hide");
+    require(!h.tick(2099, false, false, shown, path), "honor overlay hide delay");
+    require(h.tick(2100, false, false, shown, path) && !h.pending && shown == 0 &&
+            access(path, F_OK) != 0, "resume background video only after hiding");
+
+    require(!h.request(3000, true, path), "request second handoff");
+    require(!h.tick(6999, true, false, shown, path), "wait for HMI within deadline");
+    require(h.tick(7000, true, false, shown, path) && !h.pending && access(path, F_OK) != 0,
+            "restore projection after failed handoff");
+    require(!h.request(7100, true, path), "request slow handoff");
+    require(!h.tick(11000, false, false, shown, path), "late HMI transition still waits for overlay");
+    require(h.tick(11500, false, false, shown, path), "resume only after delayed overlay hide");
+    shown = 1;
+    require(!h.request(8000, true, path), "request with background focus");
+    require(!h.tick(8100, false, true, shown, path), "wait while overlay hides with background focus");
+    require(!h.tick(8600, false, true, shown, path) && !h.pending && shown == 0,
+            "preserve native background focus");
+    require(!h.request(9000, true, path), "request before quick reopen");
+    require(!h.tick(9100, false, false, shown, path), "observe hidden page");
+    require(h.tick(9200, true, true, shown, path) && shown == 1, "restore focus on quick reopen");
+    require(h.request(10000, true, "/nonexistent/nbt-focus-test/request"), "restore focus on signal failure");
+    require(!h.pending, "signal failure must not leave a pending handoff");
+    require(h.request(-1, true, path), "restore focus if the monotonic clock fails");
+}
+
 } // namespace
 
 int main()
@@ -159,6 +203,7 @@ int main()
     test_live_stream();
     test_live_recovery();
     test_padded_queue_budget();
+    test_focus_handoff();
     puts("Capture output OK: diagnostic index, live bytes, and recovery after backpressure");
     return 0;
 }

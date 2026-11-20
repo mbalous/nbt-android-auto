@@ -382,9 +382,9 @@ struct Capture {
     uint64_t bytes;  // unpadded input bytes in live mode, bytes written in diagnostic mode
     unsigned frames, configs, frame_limit;
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
-    bool live;
+    bool live, native_focus_pending;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false)
+    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false), native_focus_pending(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -547,22 +547,96 @@ void media_consumed(uint8_t channel, size_t bytes, void* session)
     static_cast<nbt::AASession*>(session)->postAudioConsumed(channel, bytes);
 }
 
-// The phone asked for the screen back (car 2026-11-10: the "exit to car" icon in the Android Auto rail, picked with the
-// controller): it stops the video, our decoder ran dry ("stream inactive"), the service ended the session and the phone
-// refused the reconnect - the "connected but nothing works" drop-out. This head unit has no native screen to hand back
-// to (MENU leaves Android Auto), so the projection is given back to the phone half a second later and AA simply goes on.
-volatile long long g_refocus_at = 0; // monotonic ms at which to send video focus PROJECTED again (0 = nothing pending)
-
-void focus_request(bool projected, uint32_t reason, void*)
+// The session callback runs on the session thread; the capture pump owns the handoff and focus indications.
+void focus_request(bool projected, uint32_t reason, void* user)
 {
     if (projected)
         return;
-    printf("AA_FOCUS phone asked for the native screen (reason %u): giving the projection back in 0.5 s\n",
-           (unsigned)reason);
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    g_refocus_at = (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000 + 500;
+    Capture* c = static_cast<Capture*>(user);
+    pthread_mutex_lock(&c->mutex);
+    c->native_focus_pending = true;
+    pthread_mutex_unlock(&c->mutex);
+    printf("AA_FOCUS phone requested native screen (reason %u)\n", (unsigned)reason);
 }
+
+const char* const kExitRequest = "/fs/ram3/nbt-aa-exit-to-idrive";
+
+struct FocusHandoff {
+    bool pending;
+    long long deadline, hidden_since;
+    FocusHandoff() : pending(false), deadline(0), hidden_since(0) {}
+
+    // Returns true if the caller should restore projected focus immediately.
+    bool request(long long now, bool visible, const char* path) {
+        if (pending)
+            return false;
+        if (now < 0) {
+            printf("AA_FOCUS cannot request iDrive handoff: monotonic clock failed\n");
+            return true;
+        }
+        if (visible) {
+            const std::string tmp = std::string(path) + ".tmp";
+            int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            if (fd < 0) {
+                printf("AA_FOCUS cannot request iDrive handoff: errno=%d\n", errno);
+                return true;
+            }
+            char msg[40];
+            const int len = snprintf(msg, sizeof(msg), "%lld\n", now + 4000);
+            const bool written = len > 0 && len < (int)sizeof(msg) && write(fd, msg, len) == len;
+            const int saved_errno = errno;
+            const bool closed = close(fd) == 0;
+            if (!written || !closed || rename(tmp.c_str(), path) != 0) {
+                printf("AA_FOCUS cannot publish iDrive handoff: errno=%d\n", written ? errno : saved_errno);
+                unlink(tmp.c_str());
+                return true;
+            }
+        }
+        pending = true;
+        deadline = now + 4000;
+        hidden_since = visible ? 0 : now;
+        return false;
+    }
+
+    // Keep the decoder fed once the overlay has actually hidden. With the opt-in background-focus mode, leave native
+    // focus in place until the page is opened again. The timeout avoids stranding the decoder if the HMI ignores us.
+    bool tick(long long now, bool visible, bool bg_focus, int& shown_state, const char* path) {
+        if (!pending)
+            return false;
+        if (now < 0) {
+            pending = false;
+            unlink(path);
+            printf("AA_FOCUS handoff interrupted: monotonic clock failed\n");
+            return true;
+        }
+        if (!visible && !hidden_since)
+            hidden_since = now;
+        if (visible && hidden_since) {
+            pending = false;
+            unlink(path);
+            shown_state = 1;
+            printf("AA_FOCUS Android Auto reopened during handoff\n");
+            return true;
+        }
+        if (!visible) {
+            if (now - hidden_since >= 500) {
+                pending = false;
+                unlink(path);
+                shown_state = 0;
+                printf("AA_FOCUS iDrive visible; %s\n", bg_focus ? "keeping native focus" : "resuming background video");
+                return !bg_focus;
+            }
+            return false;
+        }
+        if (now >= deadline) {
+            pending = false;
+            unlink(path);
+            printf("AA_FOCUS iDrive handoff timed out; restoring projection\n");
+            return true;
+        }
+        return false;
+    }
+};
 
 // AASession codec config callback (SPS/PPS)
 void config(const uint8_t* p, size_t n, void* v)
@@ -803,8 +877,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (c.live) {
         session.setNavStatusCallback(nav_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
-        g_refocus_at = 0;
-        session.setVideoFocusCallback(focus_request, 0);
+        unlink(kExitRequest);
+        session.setVideoFocusCallback(focus_request, &c);
         const char* media_out = getenv("NBT_AA_MEDIA_OUT");
         if (media_out && *media_out) {
             nbt::mediaout::setConsumedCallback(media_consumed, &session);
@@ -894,6 +968,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     const bool bg_focus = c.live && bg && !strcmp(bg, "1");
     int shown_state = 1;
     long long next_focus_check = 0;
+    FocusHandoff handoff;
     const long long start = now_ms();
     // Clean end (car 2026-11-10): an abrupt end (service restart, decoder gone) left Android Auto on the phone stuck until
     // it was force-stopped ("Invalid channel ... premature encryption" right after the next VersionRequest). Before
@@ -952,12 +1027,19 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
                 printf("AA_NIGHT car headlights %s: Android Auto %s\n", n ? "on" : "off", n ? "night (dark)" : "day");
             }
         }
-        if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
-            g_refocus_at = 0;
-            session.postVideoFocus(true);
-            printf("AA_FOCUS projection given back to the phone\n");
+        if (c.live && !bye_until) {
+            pthread_mutex_lock(&c.mutex);
+            const bool native_requested = c.native_focus_pending;
+            c.native_focus_pending = false;
+            pthread_mutex_unlock(&c.mutex);
+            const long long tm = now_ms();
+            const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
+            if (native_requested && handoff.request(tm, visible, kExitRequest))
+                session.postVideoFocus(true);
+            if (handoff.tick(tm, visible, bg_focus, shown_state, kExitRequest))
+                session.postVideoFocus(true);
         }
-        if (!bye_until && bg_focus && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
+        if (!bye_until && bg_focus && !handoff.pending && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;
             const int visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
             if (visible != shown_state) {
@@ -999,8 +1081,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in
-    if (c.live)
+    if (c.live) {
         unlink("/fs/ram3/nbt-aa-native/nav.state");
+        unlink(kExitRequest);
+    }
     // USB reader's individual transfer is bounded; no cancellation of a live URB.
     pthread_join(thread, 0);
     if (have_writer) {

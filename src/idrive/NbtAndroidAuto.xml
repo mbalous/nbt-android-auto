@@ -44,6 +44,7 @@
       <textIdModel id="91" textId="31" preinst="false"/>
       <textIdModel id="94" textId="33" preinst="false"/>
       <textIdModel id="95" textId="34" preinst="false"/>
+      <raIntModel id="96" modelType="NativeStateID" value="1"/>
     </models>
     <events>
       <focusEvent id="52" target="13"/>
@@ -565,6 +566,17 @@
       <focusEvent id="707" target="10"/>
       <focusEvent id="708" target="10"/>
       <focusEvent id="709" target="10"/>
+      <!-- iDrive main menu; rotate events because each is limited to 11 uses per HMI start. -->
+      <focusEvent id="720" targetModel="96"/>
+      <focusEvent id="721" targetModel="96"/>
+      <focusEvent id="722" targetModel="96"/>
+      <focusEvent id="723" targetModel="96"/>
+      <focusEvent id="724" targetModel="96"/>
+      <focusEvent id="725" targetModel="96"/>
+      <focusEvent id="726" targetModel="96"/>
+      <focusEvent id="727" targetModel="96"/>
+      <focusEvent id="728" targetModel="96"/>
+      <focusEvent id="729" targetModel="96"/>
     </events>
     <hmiStates>
       <hmiState id="10" textModel="3" text="Android Auto">
