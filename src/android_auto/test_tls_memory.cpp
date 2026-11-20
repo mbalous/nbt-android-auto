@@ -76,7 +76,8 @@ static void initialize(peer *p, int server, const char *hostname) {
     check(mbedtls_ctr_drbg_seed(&p->rng, mbedtls_entropy_func, &p->entropy,
                                (const unsigned char *)label, strlen(label)), "OS entropy seed");
     check(mbedtls_x509_crt_parse_file(&p->ca, "lab-ca.pem"), "CA parse");
-    check(mbedtls_x509_crt_parse_file(&p->cert, server ? "lab-server.pem" : "lab-client.pem"), "cert parse");
+    const char* server_cert = getenv("TEST_SERVER_CERT");
+    check(mbedtls_x509_crt_parse_file(&p->cert, server ? (server_cert ? server_cert : "lab-server.pem") : "lab-client.pem"), "cert parse");
     check(mbedtls_pk_parse_keyfile(&p->key, server ? "lab-server-key.pem" : "lab-client-key.pem",
                                   NULL, mbedtls_ctr_drbg_random, &p->rng), "key parse");
     check(mbedtls_ssl_config_defaults(&p->config,
@@ -150,14 +151,16 @@ static void test_peer_pin(void) {
     strcpy(pin,"sha256:");
     for (unsigned i = 0; i < 32; ++i) sprintf(pin+7+i*2,"%02x",digest[i]);
     mbedtls_x509_crt_free(&certificate);
-    /* modes: 0 right pin, 1 wrong pin, 2 right pin but wrong trust chain,
-     * 3 "chain" (any leaf of the trusted root), 4 "chain" with a wrong trust chain */
-    for (unsigned mode = 0; mode < 5; ++mode) {
+    /* Also exercise expired/future leaves, and ensure the date opt-in does not bypass the trust chain. */
+    for (unsigned mode = 0; mode < 10; ++mode) {
         char selected[72]; strcpy(selected,pin);
         if (mode == 1) selected[7] = selected[7] == '0' ? '1' : '0';
         if (mode >= 3) strcpy(selected,"chain");
         setenv("NBT_AA_TLS_PEER",selected,1);
-        setenv("NBT_AA_TLS_CA",mode == 2 || mode == 4 ? "lab-client.pem" : "lab-ca.pem",1);
+        setenv("NBT_AA_TLS_CA",mode == 2 || mode == 4 || mode == 7 ? "lab-client.pem" : "lab-ca.pem",1);
+        setenv("NBT_AA_TLS_ALLOW_DATE_ERRORS",mode == 6 || mode == 7 || mode == 9 ? "1" : "0",1);
+        if (mode >= 5) setenv("TEST_SERVER_CERT", mode >= 8 ? "lab-server-future.pem" : "lab-server-expired.pem", 1);
+        else unsetenv("TEST_SERVER_CERT");
         nbt::AACryptor crypt;
         require(crypt.init(),crypt.lastError());
         peer *server = (peer*)calloc(1,sizeof(peer)), *carrier = (peer*)calloc(1,sizeof(peer));
@@ -178,7 +181,7 @@ static void test_peer_pin(void) {
         }
         printf("AA_TLS_PIN_CASE mode=%u ok=%d server=%d complete=%d detail=%s\n",
             mode,ok,server_result,crypt.isHandshakeComplete(),crypt.lastError());
-        require(mode == 0 || mode == 3 ? ok && !server_result && crypt.isHandshakeComplete() :
+        require(mode == 0 || mode == 3 || mode == 6 || mode == 9 ? ok && !server_result && crypt.isHandshakeComplete() :
             !ok && !crypt.isHandshakeComplete(),"pin/chain enforcement");
         release(server); free(carrier);
     }
@@ -189,6 +192,8 @@ static void test_peer_pin(void) {
     }
     setenv("NBT_AA_TLS_CA","lab-ca.pem",1);
     setenv("NBT_AA_TLS_PEER","qnx-aa-lab.local",1);
+    unsetenv("TEST_SERVER_CERT");
+    unsetenv("NBT_AA_TLS_ALLOW_DATE_ERRORS");
     puts("AA_TLS_PIN_OK matching mismatch malformed chain-still-required chain-mode-any-leaf chain-mode-wrong-root");
 }
 

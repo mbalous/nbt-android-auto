@@ -34,6 +34,7 @@ FILES = [
     ('rt/ca.pem', RT + '/ca.pem', '600'),
     ('rt/boot.sh', RT + '/boot.sh', '700'),
     ('rt/restart.sh', RT + '/restart.sh', '700'),
+    ('rt/incident.sh', RT + '/incident.sh', '700'),
     ('plugin/libNbtAndroidAuto.so', PLUGIN + '/libNbtAndroidAuto.so', '755'),
     ('plugin/NbtAndroidAuto.xml', PLUGIN + '/NbtAndroidAuto.xml', '644'),
     ('plugin/NbtAndroidAuto_ALL_Texts.zip', PLUGIN + '/NbtAndroidAuto_ALL_Texts.zip', '644'),
@@ -52,7 +53,7 @@ def built_files(built, pem_dir):
             source = pem_dir / leaf
         elif name.startswith('plugin/') and leaf != 'libNbtAndroidAuto.so':
             source = resources / leaf
-        elif leaf in ('boot.sh', 'restart.sh'):
+        elif leaf in ('boot.sh', 'restart.sh', 'incident.sh'):
             source = REPO / 'scripts' / ('nbt-aa-' + leaf)
         else:
             source = programs / leaf

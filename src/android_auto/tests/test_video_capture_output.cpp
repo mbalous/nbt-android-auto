@@ -118,7 +118,7 @@ void test_live_stream()
     c.live = true;
     config(kConfig, sizeof(kConfig), &c);
     video(0, kFrame, sizeof(kFrame), 42, &c);
-    require(c.frames == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
+    require(c.frames == 1 && c.received == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
             "live summary counts source frames, configs and unpadded bytes");
 
     const uint8_t padded_frame[] = {

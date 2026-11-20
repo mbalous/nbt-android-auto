@@ -44,6 +44,8 @@ void stop();
 // AASession callbacks (session thread). Never block.
 void onAudio(uint8_t channel, const uint8_t* pcm, size_t len);
 void onState(uint8_t channel, bool started, uint32_t rate, uint32_t channels);
+// Set bounded media gain from the car's volume level. Safe across mixer and session threads.
+void setVolume(int percent);
 
 } // namespace mediaout
 } // namespace nbt

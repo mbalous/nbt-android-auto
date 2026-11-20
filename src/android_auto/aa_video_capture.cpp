@@ -381,9 +381,10 @@ struct Capture {
     int error;
     uint64_t bytes;  // unpadded input bytes in live mode, bytes written in diagnostic mode
     unsigned frames, configs, frame_limit;
+    unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     bool live;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), live(false)
+    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -495,6 +496,8 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
             c->error = 1;
         else {
             bool accepted = true;
+            if (!config)
+                ++c->received;
             if (c->live) {
                 // Count valid input even when backpressure drops it; queue drops are logged separately.
                 live_enqueue(c, p, n, config);
@@ -679,7 +682,7 @@ int car_night()
 
 bool allowed_key(unsigned k)
 {
-    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
+    return k == 3 || k == 4 || k == 5 || k == 6 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
            k == 65536 || k == 65537 || k == 65538;
 }
 
@@ -705,7 +708,11 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
             char kind = 0;
             unsigned key = 0;
             int value = 0;
-            if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && allowed_key(key)) {
+            if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && kind == 'V' && key <= 100) {
+                aa_audio::setVolume((int)key);
+                nbt::mediaout::setVolume((int)key);
+            }
+            else if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && allowed_key(key)) {
                 if (kind == 'R' && key == 65536 && value >= -20 && value <= 20 && value)
                     session.postRelativeEvent(key, value);
                 else if (kind == 'K' && (value == 0 || value == 1))
@@ -803,6 +810,12 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             nbt::mediaout::setConsumedCallback(media_consumed, &session);
             if (nbt::mediaout::start(media_out)) {
                 media_audio_started = true;
+                FILE* v = fopen("/fs/ram3/nbt-aa-native/volume", "r");
+                if (v) {
+                    int pct;
+                    if (fscanf(v, "%d", &pct) == 1) nbt::mediaout::setVolume(pct);
+                    fclose(v);
+                }
                 // acks once played: the phone sends at the speed the car plays (no queue growing, no cuts)
                 session.setDeferredAudioAcks(true);
                 session.setAudioFrameCallback(media_audio, 0);
@@ -887,6 +900,12 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
     // ByeByeResponse ends it.
     long long bye_until = 0;
+    // Freeze watch (user report: "the Android Auto screen freezes sometimes"): no new video frame for 15 s while the
+    // page is on screen -> AA_STALL in this log and the flag file below; native_service saves an incident snapshot.
+    // (The phone may also send nothing for a still screen, so this is evidence for the log, not an action.)
+    unsigned stall_frames = 0;
+    long long stall_since = now_ms(), next_stall_check = 0;
+    bool stall_reported = false;
 
     // ---- main loop: socket pair -> USB, controller FIFO -> session, focus and shutdown handling ----
     while (start >= 0 && session.isActive()) {
@@ -903,19 +922,40 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             printf("AA_BYEBYE no answer within 1 s\n");
             break;
         }
-        if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
-            g_refocus_at = 0;
-            session.postVideoFocus(true);
-            printf("AA_FOCUS projection given back to the phone\n");
+        if (c.live && !bye_until && now_ms() >= next_stall_check) {
+            next_stall_check = now_ms() + 1000;
+            pthread_mutex_lock(&c.mutex);
+            // Count received frames even when backpressure drops them.
+            const unsigned f = c.received;
+            pthread_mutex_unlock(&c.mutex);
+            const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
+            if (f != stall_frames || !visible) {
+                if (stall_reported && f != stall_frames)
+                    printf("AA_STALL ended: video again after %lld s\n", (now_ms() - stall_since) / 1000);
+                stall_frames = f;
+                stall_since = now_ms();
+                stall_reported = false;
+            } else if (!stall_reported && now_ms() - stall_since >= 15000) {
+                stall_reported = true;
+                printf("AA_STALL no video frame for 15 s while the page is on screen (frames %u)\n", f);
+                const int fd = open("/fs/ram3/nbt-aa-native/stall", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd >= 0)
+                    close(fd);
+            }
         }
-        if (!bye_until && c.live && now_ms() >= next_night_check) {
+        if (c.live && !bye_until && now_ms() >= next_night_check) {
             next_night_check = now_ms() + 1000;
             const int n = car_night();
             if (n >= 0 && n != night_posted) {
                 night_posted = n;
                 session.postNightMode(n != 0);
-                printf("AA_NIGHT car switched to %s mode: Android Auto %s\n", n ? "night" : "day", n ? "dark" : "light");
+                printf("AA_NIGHT car headlights %s: Android Auto %s\n", n ? "on" : "off", n ? "night (dark)" : "day");
             }
+        }
+        if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
+            g_refocus_at = 0;
+            session.postVideoFocus(true);
+            printf("AA_FOCUS projection given back to the phone\n");
         }
         if (!bye_until && bg_focus && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;

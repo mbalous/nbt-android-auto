@@ -10,7 +10,15 @@ LOG=/fs/ram3/nbt-aa-boot.log
 exec >> $LOG 2>&1
 echo "=== boot.sh `date`"
 if test -e $P/disabled; then echo 'disabled'; exit 0; fi
-if test -e $R/service.lock; then echo 'service already running (lock)'; exit 0; fi
+# Never remove the marker here: native_service serializes stale-lock recovery.
+if test -e $R/service.lock; then
+  LP=`sed 1q $R/service.lock 2>/dev/null`
+  case "$LP" in
+    ''|*[!0-9]*|0|1) echo "ambiguous service.lock; refusing to start"; exit 1;;
+  esac
+  if kill -0 "$LP" 2>/dev/null; then echo "service already running (lock, pid $LP)"; exit 0; fi
+  echo "possibly stale service.lock (pid $LP): native_service will check"
+fi
 mkdir -p $R
 chmod 700 $R
 for f in native_service nbt_android_auto nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
@@ -27,11 +35,10 @@ touch $R/hw.mode
 rm -f $R/res720
 if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
 # Default: Android Auto sound on main source f6. aa-audio selects the alternative browser route.
-# bt-audio selects Bluetooth; media-jack selects phone audio through AUX.
+# bt-audio selects Bluetooth.
 rm -f $R/aa-audio $R/audioconn $R/bt-audio $R/media-jack $R/prompts-off
 if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
 if test -e $P/aa-audio; then cp $P/aa-audio $R/aa-audio; fi
-if test -e $P/media-jack; then touch $R/media-jack; fi
 if test -e $P/prompts-off; then touch $R/prompts-off; fi
 if test -e $P/bt-audio; then touch $R/bt-audio; fi
 echo 'audio: mode selected by native_service'
@@ -79,9 +86,37 @@ fi
 # Diagnostic logs on PERSISTENT storage (car 2026-11-07: after an Android Auto drop-out SSH only worked again after a
 # restart, and the RAM logs were gone). Written only when the public state changes (connecting, running, draining, ...),
 # so the flash sees a few small writes per session. The previous boot's set is kept as logs.prev.
+# Rotated once per head-unit BOOT, not per service start (boot.sh also runs on every service restart: that used to
+# throw away the logs of the drive that needed the restart). /fs/ram3 is empty after a boot, so a marker there tells
+# a new boot from a restart. The last 15 boots are kept in history/boot-<n> (logs.prev = the previous boot, as before);
+# scripts/nbt_pull_logs.py on the Mac fetches all of it.
 L=$P/logs
-rm -r $L.prev 2>/dev/null
-if test -d $L; then mv $L $L.prev; fi
+H=$P/history
+if test -e "$P/extended-log-history" && test ! -e /fs/ram3/nbt-aa-booted; then
+  N=`cat $P/boot-count 2>/dev/null`
+  case "$N" in ''|*[!0-9]*) N=0 ;; esac
+  N=$((N+1)); echo $N > $P/boot-count
+  rm -r $L.prev 2>/dev/null
+  if test -d $L; then
+    mkdir -p $H
+    OLD=`cat $L/boot-number 2>/dev/null`
+    case "$OLD" in ''|*[!0-9]*) OLD=$((N-1)) ;; esac
+    cp -r $L $H/boot-$OLD 2>/dev/null
+    mv $L $L.prev
+  fi
+  n=0
+  for d in `ls -t -d $H/boot-* 2>/dev/null`; do n=$((n+1)); if test $n -gt 15; then rm -r $d; fi; done
+  # and at most ~20 MB in all (the flash is shared with iDrive): drop the oldest boots until it fits
+  while test `du -sk $H 2>/dev/null | sed 's/[^0-9].*//'` -gt 20000 2>/dev/null; do
+    o=`ls -t -d $H/boot-* 2>/dev/null | tail -1`; test -n "$o" || break; rm -r $o
+  done
+  mkdir -p $L
+  echo $N > $L/boot-number
+  echo $N > /fs/ram3/nbt-aa-booted
+elif test ! -e "$P/extended-log-history"; then
+  rm -r $L.prev 2>/dev/null
+  if test -d $L; then mv $L $L.prev; fi
+fi
 mkdir -p $L
 # optional passive MOST trace of the cluster graphics terminal (FBlock 0x82) right after the start, when the NBT creates
 # its drawing instances (touch $P/trace-most; writes $L/most-boot-82.txt, 4 minutes, observe only)
@@ -100,7 +135,7 @@ fi
     s=`cat /fs/ram3/nbt-aa-state 2>/dev/null | tr '\n' ' '`
     if test "$s" != "$last"; then
       last="$s"
-      echo "`date +%T` $s" >> $L/states.txt
+      echo "`date '+%Y-%m-%d %H:%M:%S'` $s" >> $L/states.txt
       cp /fs/ram3/nbt-aa-plugin.log /fs/ram3/nbt-aa-boot.log $L/ 2>/dev/null
       for k in capture decoder hwvideo; do
         f=`ls -t $R/$k-*.log 2>/dev/null | sed 1q`
@@ -110,7 +145,12 @@ fi
       tail -100 /fs/ram3/nbt-cluster.log > $L/cluster-tail.log 2>/dev/null
       sloginfo 2>/dev/null | grep -e DisplayManagerScreen -e nvideocapture -e 'WindowVisible' -e 'zorder' -e 'NVRM' -e watchdog -e nme -e Nme -e NME -e udio | tail -60 > $L/slog-tail.txt
     fi
+    # iDrive (HmiMain3D) restarted without a head-unit boot: the HMI plugin leaves this flag (aa_entry_plugin.cpp)
+    if test -e "$P/incident-logging" && test -e /fs/ram3/nbt-aa-hmi-restart; then
+      rm -f /fs/ram3/nbt-aa-hmi-restart
+      sh $P/incident.sh hmi-restart 0 "iDrive (HMI) restarted while the head unit kept running" </dev/null >/dev/null 2>&1 &
+    fi
     sleep 5
   done
-  echo "`date +%T` service ended" >> $L/states.txt
+  echo "`date '+%Y-%m-%d %H:%M:%S'` service ended" >> $L/states.txt
 ) </dev/null >/dev/null 2>&1 &

@@ -28,9 +28,9 @@ struct AACryptor::State {
     std::vector<uint8_t> input, output;
     size_t consumed;
     bool complete, failed;
-    bool pinned, anyLeaf;
+    bool pinned, anyLeaf, allowDateErrors;
     unsigned char peer_digest[32];
-    State() : consumed(0), complete(false), failed(false), pinned(false), anyLeaf(false) {
+    State() : consumed(0), complete(false), failed(false), pinned(false), anyLeaf(false), allowDateErrors(false) {
         mbedtls_ssl_init(&ssl); mbedtls_ssl_config_init(&config);
         mbedtls_x509_crt_init(&cert); mbedtls_x509_crt_init(&ca);
         mbedtls_pk_init(&key); mbedtls_entropy_init(&entropy);
@@ -53,7 +53,13 @@ struct AACryptor::State {
                 memcmp(digest, s->peer_digest, sizeof(digest)) != 0)
                 *flags |= MBEDTLS_X509_BADCERT_OTHER;
         }
-        /* Never clear chain, expiry, key-usage or other verification failures. */
+        /* Compatibility mode changes only date verification, never other certificate checks. */
+        const uint32_t kTime = MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+        if (s->allowDateErrors && (*flags & kTime)) {
+            printf("[TLS] depth %d: certificate date errors waived by explicit opt-in\n", depth);
+            *flags &= ~kTime;
+        }
+        /* Never clear chain, signature, key-usage or other verification failures. */
         return 0;
     }
     ~State() {
@@ -101,6 +107,10 @@ bool AACryptor::init() {
         return false;
     }
     state_ = new State;
+    const char* allowDates = getenv("NBT_AA_TLS_ALLOW_DATE_ERRORS");
+    state_->allowDateErrors = allowDates && !strcmp(allowDates, "1");
+    if (state_->allowDateErrors)
+        printf("[TLS] WARNING: certificate date validation disabled by explicit opt-in\n");
     /* "chain": any phone whose certificate chains to NBT_AA_TLS_CA (the Android Auto root), with validity and usage
      * checks, but without a per-app leaf pin, so other phones and Android Auto app updates keep working. */
     const bool chainOnly = !strcmp(peer, "chain");

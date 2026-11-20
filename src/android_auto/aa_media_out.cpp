@@ -1,5 +1,6 @@
 // aa_media_out: Android Auto sound into one io-amp input of the NBT. See aa_media_out.hpp.
 #include "aa_media_out.hpp"
+#include "volume.hpp"
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -128,6 +129,7 @@ bool g_running = false;
 void* g_lib = 0;
 open_t a_open; handle_t a_notify; close_t a_close; getbuf_t a_getbuf; write_t a_write; err_t a_err;
 double g_duck = 1.0;               // media level: 1 normal, kDuck while a prompt / system sound plays
+float g_mediaGain = 1.0f;          // protected by g_mx
 const double kDuck = 0.25;         // about -12 dB
 const double kDuckStep = 1.0 / 2400;   // 50 ms ramp
 
@@ -163,8 +165,8 @@ void mixMain(int16_t* o, size_t frames) {
         const bool prompt = !g_elsewhere && (g || s || !g_s[S_GUIDE].waiting || !g_s[S_SYSTEM].waiting);
         if (prompt && g_duck > kDuck) g_duck -= kDuckStep;
         else if (!prompt && g_duck < 1.0) g_duck += kDuckStep / 10;   // slower back up (0.5 s)
-        int l = (m ? (int)(ml * g_duck) : 0) + gl + sl;
-        int r = (m ? (int)(mr * g_duck) : 0) + gr + sr;
+        int l = (m ? (int)(ml * g_duck * g_mediaGain) : 0) + gl + sl;
+        int r = (m ? (int)(mr * g_duck * g_mediaGain) : 0) + gr + sr;
         clamp(l); clamp(r);
         o[2 * i] = (int16_t)l; o[2 * i + 1] = (int16_t)r;
     }
@@ -337,6 +339,17 @@ void* promptWriter(void*) {
 }
 
 } // namespace
+
+void setVolume(int percent) {
+    const char* off = getenv("NBT_AA_VOLUME");
+    if (off && off[0] == '0') return;
+    percent = volumeClampPct(percent);
+    const float gain = percent ? volumePctToGain(percent) : 0.0f;
+    pthread_mutex_lock(&g_mx);
+    g_mediaGain = gain;
+    pthread_mutex_unlock(&g_mx);
+    printf("AA_MEDIA_OUT volume %d%% -> %d dB\n", percent, volumePctToDb(percent));
+}
 
 void setConsumedCallback(ConsumedFn fn, void* user) { g_consumed = fn; g_consumedUser = user; }
 

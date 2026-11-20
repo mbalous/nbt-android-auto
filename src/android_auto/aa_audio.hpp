@@ -23,7 +23,10 @@ namespace aa_audio {
 bool setup(nbt::AASession& session);
 // After session.stop() (the session thread has ended): ends the session for the backend and shuts it down.
 void shutdown();
-
+// The car's master volume in percent (0..100, from nbt_knob): sets the Android Auto media gain. The browser connection
+// is not attenuated by the car, so without this the steering-wheel / knob volume did nothing for Android Auto sound.
+// Any thread; ignored when audio is off. NBT_AA_VOLUME=0 (file aa-volume-off) keeps the gain fixed at 0 dB.
+void setVolume(int percent);
 } // namespace aa_audio
 
 #endif

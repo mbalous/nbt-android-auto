@@ -34,7 +34,11 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+#ifdef NBT_OPEN_TOOLCHAIN
+#include "qnx_spawn_compat.h"   // the open sysroot has no <spawn.h>
+#else
 #include <spawn.h>
+#endif
 #include <signal.h>
 #include <pthread.h>
 #include <new>
@@ -241,7 +245,14 @@ class BackToEntry : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
     BackToEntry():app(0) {}
-    void run() { if(app){plog("mode chosen -> back to page 10");app->triggerEvent(kEvEntry);} }
+    // 53 first, then 700..709 (each focus event works only 11 times per HMI start, see kEvPoolFirst)
+    void run() {
+        if(!app)return;
+        static unsigned uses=0;
+        const unsigned ev=uses<10?kEvEntry:700+((uses-10)/10)%10;
+        ++uses;
+        plog("mode chosen -> back to page 10, focus event",(int)ev);app->triggerEvent(ev);
+    }
 };
 // Show request (2026-11-17, to replace favourite 8): a program creates /fs/ram3/nbt-aa-show; the poll below removes it
 // and, while Android Auto runs, sends the hold focus event (52/54, through hold(): rate limit and loop guard apply) to
@@ -283,8 +294,14 @@ bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
     char text[160];cdsText(v,text,sizeof(text));
     const char* d=text;while(*d&&(*d<'0'||*d>'9'))++d;
     const int st=*d?atoi(d):-1;
+    static int lastSt=-1;
+    if(st==lastSt)return true;
+    lastSt=st;
     if(st==1){g_pdcFromAa=access(kHidden,F_OK)!=0;plog("parking assistant on, Android Auto was on screen",g_pdcFromAa?1:0);}
-    else if(st==2&&g_pdcFromAa){g_pdcFromAa=false;touch(kShowRequest);plog("parking assistant off: back to Android Auto",0);}
+    else if(st==2&&g_pdcFromAa){
+        g_pdcFromAa=false;
+        if(access(kLeave,F_OK)!=0){touch(kShowRequest);plog("parking assistant off: back to Android Auto",0);}
+    }
     return true;
 }
 class CdsSubscribe : public bmw::Runnable {
@@ -317,13 +334,14 @@ public:
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
     unsigned shownText; int shownMode, shownBoot; long long lastBootToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
+    long lastGuardReset;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),lastGuardReset(-1000),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -386,6 +404,13 @@ public:
         if(focused&&!e->stopping){
             unlink(kLeave);                    // the driver came back on purpose
             touch(kRequest);
+            // User report 2026-11-19: "shows connected but does not open when clicking Android Auto". After popups /
+            // side panels the 10-per-minute loop guard was used up and refused every hold, also the one the driver asked
+            // for by opening the page. The guard is for automatic loops: an entry that our own hold event did not cause
+            // (none in the last 3 s) starts a fresh minute.
+            // at most once a minute, so a slow automatic loop (entry page every few seconds) is still stopped
+            if(now_ms()-e->lastHoldMs>3000&&e->holds&&now_s()-e->lastGuardReset>=60){
+                plog("entry by the driver: loop guard reset",(int)e->holds);e->holds=0;e->window=now_s();e->lastGuardReset=now_s();}
             if(readStatus(&e->running)==kTxtServiceDown)launchService();   // service not running: start it now
             e->startPolling(50);if(e->running)e->check(30);
         }
@@ -490,7 +515,7 @@ void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
-    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
+    if(unlink(kLeave)==0){plog("check: leave key");g_pdcFromAa=false;touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
     {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
         // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
         struct stat st;
@@ -673,6 +698,11 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     app->addHandler(kSysAskState,kFocus,onSysAsk);
     app->addHandler(kSysGoState,kFocus,onSysGo);
     created=true;
+    // iDrive restarted without a head-unit boot (user report: "one time the entire iDrive rebooted"): /fs/ram3 survives
+    // an HMI restart, so a marker from an earlier load means HmiMain3D started again. boot.sh's watcher then saves an
+    // incident snapshot (QNX system log) for the next log pull.
+    if(access("/fs/ram3/nbt-aa-plugin-loaded",F_OK)==0){plog("HMI restarted: plugin loaded again in this boot");touch("/fs/ram3/nbt-aa-hmi-restart");}
+    touch("/fs/ram3/nbt-aa-plugin-loaded");
     touch(kHidden);   // nothing is shown before the page is opened
     unlink(kShowRequest);                       // a request left from before this HMI start
     plog("app start at create",app->start()?1:0);

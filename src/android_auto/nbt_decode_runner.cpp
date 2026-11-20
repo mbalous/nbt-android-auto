@@ -40,12 +40,16 @@
 #include <string.h>
 #include <time.h>
 #include <fcntl.h>
+#ifdef NBT_OPEN_TOOLCHAIN
+#include <dlfcn.h>
+#else
 #include <devctl.h>
 #include <sys/neutrino.h>
+#endif
 
 #define NMECTL_SET_OPTION 0x80000501
 #define NMECTL_GET_OPTION 0xc0000502
-#define NME_OPTS_FILE "nme-options.saved" /* in the working directory (the runtime folder) */
+#define NME_OPTS_FILE "/fs/ram3/nbt-aa-nme-options.saved"
 
 /* every global option the NmeCmdLine switches we use (or used) can change */
 static const char* const NME_OPTS[] = {
@@ -61,11 +65,24 @@ static int nme_have[NME_OPT_COUNT];
 /* the same call NmeCtrl() in libNme.so makes: devctlv with one send and one reply part; result = io-nme's error code */
 static int nme_ctrl(int fd, unsigned dcmd, const void* in, int in_len, void* out, int out_len)
 {
+#ifdef NBT_OPEN_TOOLCHAIN
+    struct NmeIov { void* base; unsigned len; };
+    typedef int (*Devctlv)(int, int, int, int, const NmeIov*, const NmeIov*, int*);
+    static Devctlv fn = reinterpret_cast<Devctlv>(dlsym(RTLD_DEFAULT, "devctlv"));
+    if (!fn) {
+        fprintf(stderr, "NME_OPTIONS no devctlv: options cannot be saved or restored\n");
+        return -ENOSYS;
+    }
+    NmeIov sv = {const_cast<void*>(in), (unsigned)in_len}, rv = {out, (unsigned)out_len};
+    int info = 0;
+    const int r = fn(fd, (int)dcmd, in ? 1 : 0, out ? 1 : 0, &sv, &rv, &info);
+#else
     iov_t sv, rv;
     int info = 0, r;
     SETIOV(&sv, (void*)in, in_len);
     SETIOV(&rv, out, out_len);
     r = devctlv(fd, (int)dcmd, in ? 1 : 0, out ? 1 : 0, &sv, &rv, &info);
+#endif
     return r ? -r : info;
 }
 

@@ -63,6 +63,19 @@ def fixtures():
         files[f"lab-{role}.pem"] = cert.public_bytes(serialization.Encoding.PEM)
         files[f"lab-{role}-key.pem"] = key.private_bytes(serialization.Encoding.PEM,
                 serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        if role == "server":
+            for label, start, end in [
+                ("expired", datetime(2001, 1, 1, tzinfo=timezone.utc), datetime(2002, 1, 1, tzinfo=timezone.utc)),
+                ("future", datetime(2090, 1, 1, tzinfo=timezone.utc), datetime(2091, 1, 1, tzinfo=timezone.utc)),
+            ]:
+                date_cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(name)
+                             .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                             .not_valid_before(start).not_valid_after(end)
+                             .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
+                             .add_extension(x509.SubjectAlternativeName([x509.DNSName("qnx-aa-lab.local")]), False)
+                             .add_extension(x509.ExtendedKeyUsage([purpose]), False)
+                             .sign(ca_key, hashes.SHA256()))
+                files[f"lab-server-{label}.pem"] = date_cert.public_bytes(serialization.Encoding.PEM)
     return files
 
 

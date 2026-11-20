@@ -6,8 +6,8 @@ This fork ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-aut
 [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) `main` at `12c8411` (2026-11-11). It was
 developed and tested on a BMW F30 with NBT. Reverted experiments are not listed; only what the code does now.
 
-**Setup:** a dedicated phone that always stays in the car, connected via USB. Its sound comes over USB into the car
-(source `f6`, see Audio below); the 3.5 mm cable to AUX is optional (flag file `media-jack` = the old cable setup).
+**Setup:** phone connected via USB; sound comes over USB into the car (source `f6`, see Audio below).
+The former `media-jack` mode is no longer supported; factory AUX is unchanged.
 
 **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
 split screen contents, or split screen off, get less testing.
@@ -47,9 +47,9 @@ screen.
 | BACK | Goes to the phone; on the press nbt_knob sends iDrive a tilt right, so iDrive's BACK only returns the focus (`NBT_BACK_GUARD`) |
 | Tilt left | The same tilt right on the press, plus a BACK on the release (`NBT_TILT_GUARD`) |
 | NAV | Brings Android Auto to the front (`NBT_NAV_OPENS_AA`) |
-| NAV in Android Auto | Android Auto audio: source not AUX → switch to AUX and start playback if the phone is not playing; source AUX → play / pause (`NBT_NAV_AUDIO`) |
+| NAV in Android Auto | Switch to `f6` and start playback, or play / pause on `f6` (`NBT_NAV_AUDIO`) |
 | MENU, COM, MEDIA, OPTION | Hide the picture at once and stay with iDrive |
-| Wheel roller | Up = NEXT, down = PREVIOUS, push = PLAY_PAUSE, only while the source is AUX (`NBT_WHEEL_AUX_ONLY`) |
+| Wheel roller | Up = NEXT, down = PREVIOUS, push = PLAY_PAUSE, subject to source selection (`NBT_WHEEL_AUX_ONLY`) |
 | Roller at start | The first status after start (`ff`) is ignored; only `80` / `7e` count as steps (fixed a one-time song skip at boot) |
 | Phone button | Roller and push stay with iDrive's contact list until 4 s without a turn (`NBT_LIST_HOLD_S`) |
 
@@ -63,8 +63,7 @@ over the Android Auto connection and are written into io-amp input `input_stereo
 48 kHz stereo, media turned down under prompts, acks once played). That input plays as main source **`f6`**, which the
 amplifier builds without a medium; iDrive keeps it, shows a globe with a music note as the source and leaves the steering wheel to us. `f6` is the
 Android Auto source: play or NAV in Android Auto switches to it, leaving it pauses the phone, the rocker goes to the
-phone only on `f6`. iDrive's AUX stays factory. The file `media-jack` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` brings
-back the cable setup (no media channel, the Android Auto source is AUX, choosing AUX opens Android Auto). Prompts
+phone only on `f6`. iDrive's AUX stays factory. Prompts
 while another source plays (radio, Bluetooth, AUX, none) go into `input_stereo_3` instead, and `nbt_knob` builds
 connection **`b8`** (the browser, interrupting) for them: the main source is muted while the prompt plays, then `b8` is
 removed 0.8 s after it (like traffic news). Flag file `prompts-off`: prompts only on Android Auto's source.
@@ -77,15 +76,21 @@ removed 0.8 s after it (like traffic news). Flag file `prompts-off`: prompts onl
 | Back on it | Sends PLAY_PAUSE again if the pause was ours (`NBT_AUX_RESUME`) |
 | Phone starts playing | Switches to Android Auto's source if it is not active (`NBT_PLAY_AUX`) |
 | NAV in Android Auto | Switches to Android Auto's source and plays, or play / pause on it (`NBT_NAV_AUDIO`) |
-| AUX chosen in iDrive | Cable setup only (`media-jack`): brings Android Auto to the front (`NBT_AUX_OPENS_AA`) |
 
-`NBT_AUX_SOURCE` is Android Auto's source: `f6` by default, `bb` (AUX) with `media-jack`.
+The internal legacy `NBT_AUX_*` names still control the `f6` source; they no longer activate factory AUX.
+
+The car's volume level adjusts Android Auto media gain on both `f6` and the optional browser route.
+`f6` may already be attenuated by the car, so this could cause double attenuation; it has not been vehicle-tested.
+Create `aa-volume-off` in the package directory to disable software volume adjustment.
 
 The phone's playing / paused state comes from the session: a small NBT-AAD core patch
 (`patches/nbt-aad-aa_session-media-state.patch`) writes it to `/fs/ram3/nbt-aa-media` (2 = playing, 3 = paused).
 
 ## Connection, USB, service and decoder
 
+- **Service recovery:** a PID marker and an advisory lock serialize recovery after a crash. An empty or invalid
+  legacy marker is treated as ambiguous and requires manual recovery; advisory locking on the target RAM filesystem
+  has not been vehicle-tested.
 - **Decoder audio bug:** `NmeCmdLine -a0` set `Audio/Enable=0` in io-nme's one global option set, so every source
   iDrive started afterwards (Bluetooth, AUX) had no audio until an HMI reboot. The decoder no longer passes `-a0`, and
   saves and restores the options it changes (`nme-options.saved`, cleared at boot).
