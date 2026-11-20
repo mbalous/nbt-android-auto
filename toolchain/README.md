@@ -39,6 +39,9 @@ taken from an existing payload with `--reuse`:
 [`../flash-aa-open.sh`](../flash-aa-open.sh) builds only by default; `--install` or `--install-only` explicitly
 requests installation. Link-only stubs and hand-written headers do not establish ABI compatibility or vehicle safety.
 
+See [COMPARISON.md](COMPARISON.md) for a same-source open-versus-SDP build comparison and the remaining validation
+needed before considering the open toolchain for releases.
+
 ## How it differs from an SDP build
 
 - The C++ programs link GNU libstdc++ **statically** instead of Dinkum `libcpp.so.4`, so they are bigger (about
