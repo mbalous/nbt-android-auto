@@ -2,7 +2,7 @@
 
 ## Tatsaechlich durchgefuehrte Pruefungen
 
-- Windows erreicht QNX ueber Host-only: 192.168.56.1 -> 192.168.56.10.
+- Host erreicht QNX ueber Host-only: 192.168.56.1 -> 192.168.56.10.
   Zwei Pings erfolgreich, jeweils unter 1 ms; MAC 08:00:27:a6:31:e7 stimmt.
 - SSH-Server: OpenSSH_5.2 QNX_Secure_Shell-20090621-hpn13v6.
 - RSA-3072-Hostschluessel anhand der lokalen VM-Konsole verifiziert.
@@ -21,13 +21,13 @@
 - Exitcode: 0. Kein Root-Build, kein Zugriff auf Display oder Fahrzeugdienste.
 - ELF-Pruefung: ELF32, little-endian, Intel 80386, dynamischer Interpreter
   /usr/lib/ldqnx.so.2, einzige NEEDED-Bibliothek libc.so.3.
-- PowerShell-Syntaxpruefungen und git diff --check erfolgreich.
+- Syntaxpruefungen und git diff --check erfolgreich.
 
 ## Artefakt
 
 Lauf-ID: 20261105T172354Z-66cc61c1
 
-Windows: build/20261105T172354Z-66cc61c1/hello_nbt (5239 Bytes).
+Host: build/20261105T172354Z-66cc61c1/hello_nbt (5239 Bytes).
 
 VM: /home/nbtbuild/.nbt-build/20261105T172354Z-66cc61c1/hello_nbt.
 
@@ -50,11 +50,6 @@ separate Nutzerfreigabe.
 Die QNX-IP wurde zur Laufzeit gesetzt und sshd manuell gestartet. Es wurden
 keine Bootprofile geaendert. Nach einem VM-Neustart koennen beide Schritte
 an der Konsole erneut erforderlich sein.
-## Windows-PowerShell-Launcher
 
-Nachpruefung: 20261105T173241Z-214504aa.
-`build.cmd` startet das Skript mit prozesslokalem RemoteSigned. Der echte Build,
-VM-Test und Artefaktdownload liefen mit Exitcode 0 durch. Die .NET-SHA256-Werte
-im Manifest wurden unabhaengig mit Get-FileHash in PowerShell 7 verglichen.
-Nach dem Test war die Windows-PowerShell-Standardrichtlinie weiterhin Restricted,
-und alle gespeicherten Richtlinien-Scope-Werte waren unveraendert Undefined.
+Aktuelle Linux/WSL-Helfer fuer Trust, Bootstrap, Probe und Smoke-Build liegen in
+`scripts/qnx_vm_setup.py`.

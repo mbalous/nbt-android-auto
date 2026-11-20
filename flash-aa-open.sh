@@ -1,26 +1,28 @@
 #!/bin/bash
 #
-# flash-aa-open.sh - build the Android Auto USB-audio fork (branch aa-audio, upstream PR #6) with the open
-# QNX 6.5.0 toolchain and install it on the NBT, end to end. No QNX SDP, licence, VM or prebuilt zip needed.
+# flash-aa-open.sh - experimental open-toolchain build (and optional unsupported car install).
 #
-# This is the second path next to install-aa.sh (which installs a zip someone else built). It does not touch
-# install-aa.sh or the release installer folder in .local/python-installer/.
+# Supported vehicle deployments should use the QNX 6.5.0 VM/SDP build (`scripts/build_all.py`).
+# This script uses the experimental Docker-based open QNX toolchain (which still reuses an
+# existing `accessory_window` binary from a prior payload).
 #
 # Usage:
 #   ./flash-aa-open.sh                # build only; never connects to the car
 #   ./flash-aa-open.sh --build-only   # build the payload, stop before the car (do this at home)
-#   ./flash-aa-open.sh --install      # build, then install on the car
-#   ./flash-aa-open.sh --install-only # install the payload built earlier (do this at the car)
+#   ./flash-aa-open.sh --install      # build, then install on the car (experimental/unsupported)
+#   ./flash-aa-open.sh --install-only # install the payload built earlier (experimental/unsupported)
 #
-# Steps: toolchain (once, ~15 min) -> build programs -> installer/payload -> car link -> SSH (Bavarian)
-#        -> installer --cli install (asks for the NBT root password) -> what to test, how to roll back.
-# Human actions (Bavarian "Start", root password, iDrive restart) pause and say exactly what to do.
+# Steps: toolchain (once, ~15 min) -> build programs -> installer/payload -> car link -> SSH check
+#        -> installer --cli install (asks for the NBT root password) -> next steps.
 
 set -u
 REPO="$(cd "$(dirname "$0")" && pwd)"
-VENV_PY="$REPO/.venv/bin/python"
+if [ -x "$REPO/.venv/bin/python" ]; then
+  VENV_PY="$REPO/.venv/bin/python"
+else
+  VENV_PY="${PYTHON:-python3}"
+fi
 NBT="169.254.199.99"
-BAVARIAN="$REPO/.local/bavarian-dl/extracted/bavarian-ssh-client.app"
 RELEASE="$REPO/.local/release-payload/NBT-AndroidAuto-Python-2026.11.10.2/payload"
 NBT_AAD="$REPO/.local/reference-nbt-aad"
 NBT_AAD_REV="4328560e33d622243b68e8e1bb0766180fd954e5"
@@ -31,7 +33,6 @@ STAMP="$PAYLOAD/.built-by-open-toolchain"
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
 warn() { printf '\n\033[1;33m!!  %s\033[0m\n' "$1"; }
 die()  { printf '\n\033[1;31mXX  %s\033[0m\n' "$1" >&2; exit 1; }
-pause(){ printf '\n\033[1;35m[action needed]\033[0m %s\n' "$1"; read -r -p "    Press Enter when done... " _; }
 
 DO_BUILD=1; DO_INSTALL=0
 case "${1:-}" in
@@ -39,23 +40,23 @@ case "${1:-}" in
   --build-only) DO_INSTALL=0 ;;
   --install) DO_INSTALL=1 ;;
   --install-only) DO_BUILD=0; DO_INSTALL=1 ;;
-  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) die "Unknown option: $1 (use --build-only, --install, --install-only or nothing)" ;;
 esac
 [ "$#" -le 1 ] || die "Only one option may be specified."
 
 # ---------------------------------------------------------------- 0. sanity
-[ -x "$VENV_PY" ] || die "Python venv missing at $VENV_PY (run the Mac setup first)."
-"$VENV_PY" -c 'import paramiko' 2>/dev/null || die "paramiko missing in the venv."
-[ -f "$RELEASE/plugin/libNbtAndroidAuto.so" ] || die "Release payload missing: $RELEASE (re-extract the v2026.11.10.2 release ZIP there)."
+command -v "$VENV_PY" >/dev/null 2>&1 || die "Python not found ($VENV_PY). Create .venv or install python3."
+"$VENV_PY" -c 'import paramiko' 2>/dev/null || die "paramiko missing in $VENV_PY (pip install \"paramiko>=3.4,<4\")."
+[ -f "$RELEASE/plugin/libNbtAndroidAuto.so" ] || die "Reference payload missing: $RELEASE (needed to reuse accessory_window and PEMs)."
 
 # ---------------------------------------------------------------- 1-3. build
 if [ "$DO_BUILD" = 1 ]; then
   command -v docker >/dev/null || die "Docker is not installed."
-  docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop and re-run."
+  docker info >/dev/null 2>&1 || die "Docker is not running. Start the Docker daemon and re-run."
   branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
   git -C "$REPO" merge-base --is-ancestor 7ef5884 HEAD 2>/dev/null \
-    || die "Branch '$branch' does not contain the audio commit 7ef5884. Check out aa-audio (or a branch on top of it)."
+    || die "Branch '$branch' does not contain the audio commit 7ef5884."
   say "Building from branch '$branch' ($(git -C "$REPO" rev-parse --short HEAD))"
 
   if [ ! -x "$REPO/build/qnx-open/bin/i486-pc-nto-qnx6.5.0-gcc" ]; then
@@ -89,7 +90,7 @@ if [ "$DO_BUILD" = 1 ]; then
   say "Payload ready: installer/payload ($version)"
 fi
 
-[ "$DO_INSTALL" = 1 ] || { echo; echo "Build only - stopping before the car. At the car run: ./flash-aa-open.sh --install-only"; exit 0; }
+[ "$DO_INSTALL" = 1 ] || { echo; echo "Build only - stopping before the car. For an experimental install run: ./flash-aa-open.sh --install-only"; exit 0; }
 
 # ---------------------------------------------------------------- 4. check the payload
 [ -f "$PAYLOAD/manifest.json" ] || die "No installer/payload yet. Run ./flash-aa-open.sh --build-only first."
@@ -108,35 +109,28 @@ print("    payload %s: %d files, hashes OK" % (m["version"], len(m["files"])))
 EOF
 
 # ---------------------------------------------------------------- 5. link to the car
-say "Checking the Mac sees the car"
-ifconfig 2>/dev/null | grep -q '169.254' || warn "No 169.254.x.x self-assigned IP yet - the ENET adapter may not be up."
+say "Checking Linux/WSL network link to the car"
+if command -v ip >/dev/null 2>&1; then
+  ip -4 addr show 2>/dev/null | grep -q '169\.254\.' || warn "No 169.254.x.x link-local IP seen on Linux interfaces - ensure ENET is up (or WSL mirrored networking is enabled)."
+fi
 ok=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  if ping -c1 -t2 "$NBT" >/dev/null 2>&1; then ok=1; break; fi
+  if ping -c1 -W2 "$NBT" >/dev/null 2>&1; then ok=1; break; fi
   printf '    ping %s ... no reply (try %s/10)\n' "$NBT" "$i"; sleep 2
 done
-[ "$ok" = 1 ] || die "Can't reach the NBT at $NBT. Check: ignition ON, ENET cable seated, adapter shows 'Self-Assigned IP'. Then: ./flash-aa-open.sh --install-only"
+[ "$ok" = 1 ] || die "Can't reach the NBT at $NBT. Check: ignition ON, ENET cable seated, 169.254.x.x link-local address up. Then: ./flash-aa-open.sh --install-only"
 say "Car is reachable at $NBT."
 
-# ---------------------------------------------------------------- 6. open SSH (Bavarian)
-if nc -z -G 2 "$NBT" 22 >/dev/null 2>&1; then
-  say "SSH (port 22) already open - skipping the Bavarian step."
+# ---------------------------------------------------------------- 6. verify SSH port 22
+if "$VENV_PY" -c "import socket, sys; s = socket.create_connection((sys.argv[1], 22), 2); s.close()" "$NBT" 2>/dev/null; then
+  say "SSH (port 22) is open on the NBT."
 else
-  say "Opening SSH on the NBT with the Bavarian client"
-  open "$BAVARIAN" 2>/dev/null || warn "Couldn't auto-open the app. Open it from Finder: $BAVARIAN (right-click -> Open the first time)."
-  pause "In the Bavarian app: make sure the car is found, then click Start. Leave it running."
-  ok=0
-  for i in 1 2 3 4 5 6 7 8; do
-    if nc -z -G 2 "$NBT" 22 >/dev/null 2>&1; then ok=1; break; fi
-    printf '    waiting for SSH (port 22) to open ... (%s/8)\n' "$i"; sleep 3
-  done
-  [ "$ok" = 1 ] || die "SSH port 22 never opened. Stop here - the Bavarian unlock did not work on this NBT."
-  say "SSH is open on the NBT."
+  die "SSH port 22 is not open on $NBT. Unlock SSH first (see README.md#getting-ssh-access or docs/SSH-ACCESS-SERIAL.md)."
 fi
 
 # ---------------------------------------------------------------- 7. install
-say "Installing the open-toolchain build - you'll be asked for the NBT root password"
-printf '    first build from the open toolchain: not car-tested before this run.\n'
+say "Installing the EXPERIMENTAL open-toolchain build - you'll be asked for the NBT root password"
+warn "Unsupported experimental deployment path: supported vehicle binaries come from scripts/build_all.py (QNX VM)."
 ( cd "$REPO/installer" && "$VENV_PY" "$INSTALLER" --cli install --host "$NBT" ) \
   || die "Installer reported a failure (it verifies each file). Logs: cd '$REPO/installer' && '$VENV_PY' nbt_aa_installer.py --cli logs --host $NBT --output '$REPO/.local/aa-diag-open.zip'"
 
@@ -147,15 +141,12 @@ cat <<EOF
 NEXT (at the car):
   1. Restart iDrive: hold the volume/power knob ~30 s until the screen reboots.
   2. Plug the phone into the car USB port. On screen: Multimedia -> Android Auto. Accept on the phone.
-  3. Check video, iDrive knob and cluster arrows first (same as the release build).
+  3. Check video, iDrive knob and cluster arrows first.
   4. Play music with Bluetooth disconnected -> it should come from the car speakers.
 
 IF SOMETHING'S OFF:
   - Save logs:               cd "$REPO/installer" && "$VENV_PY" nbt_aa_installer.py --cli logs --host $NBT --output "$REPO/.local/aa-diag-open.zip"
   - Force Bluetooth audio:   ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa root@$NBT 'touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/bt-audio'   (then restart iDrive)
   - Radio stuck muted:       ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa root@$NBT '/var/opt/hmi/data/rw/NbtAndroidAutoRT/audioconn -r 0xb8'
-  - Back to the release:     ./install-aa.sh <release zip>   (or the release installer: --cli install)
   - Remove everything:       cd "$REPO/installer" && "$VENV_PY" nbt_aa_installer.py --cli uninstall --host $NBT
-
-Watch after install: FM radio returning after AA stops, the 688 Harman/Kardon, and the 6FH rear screens.
 EOF

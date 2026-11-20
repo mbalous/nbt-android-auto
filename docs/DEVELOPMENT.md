@@ -8,18 +8,26 @@ See below for the historical binary comparison with installer 2026.11.10.2.
 
 - **QNX Software Development Platform 6.5.0 (x86)** in a virtual machine (VirtualBox works). It can be downloaded
   from QNX; it is not part of this repository. The compiler is `qcc -V4.4.2,gcc_ntox86` (C) / `gcc_ntox86_cpp` (C++).
-  See [Setting up QNX 6.5.0](#setting-up-qnx-650) below.
-- A Windows, macOS or Linux machine with Python 3.10+ for the installer and the helper scripts.
+  See [Setting up QNX 6.5.0](#setting-up-qnx-650) below. **Binaries for supported vehicle deployment must be built in
+  this QNX VM.**
+- A **Linux or WSL** host with Python 3.10+, OpenSSH (`ssh`, `scp`, `ssh-keygen`), `git`, and (optional, for the
+  experimental open toolchain) Docker. For the installer GUI, install `tkinter` (e.g. `python3-tk`) and use X11/Wayland
+  or WSLg; `--cli` works headless.
 - An NBT with SSH root access for testing. A few proprietary libraries have to be copied **from your own NBT** for
   linking (see below). Never commit them.
+
+On WSL, native Linux networking must be able to reach both the QNX VM (host-only/bridged address) and the NBT ENET
+link-local interface (`169.254.199.99`, e.g. via WSL mirrored networking).
 
 Private files belong in `.local/` and build output in `build/`; both are ignored by git.
 
 ## Setting up QNX 6.5.0
 
-**No QNX licence?** [toolchain/README.md](../toolchain/README.md) builds the same programs with an open GCC 4.4.2
-toolchain in Docker (no SDP, no VM), including the HMI plugin (linked against stub HMI libraries). `accessory_window`
-is reused from the release. One command: `./flash-aa-open.sh --build-only`.
+**Experimental open toolchain (CI / prototyping only):** [toolchain/README.md](../toolchain/README.md) builds most
+programs with an open GCC 4.4.2 toolchain in Docker (no SDP, no VM), including the HMI plugin (linked against stub HMI
+libraries), while reusing `accessory_window` from an existing payload. `./flash-aa-open.sh --build-only` runs this
+experimental build; its `--install` / `--install-only` options are an explicit, unsupported experimental override. Use
+the QNX 6.5.0 VM below for supported vehicle deployment binaries.
 
 1. Download **QNX 6.5.0** from QNX.
 2. Install it in a VM. This video shows everything you need, step by step:
@@ -100,17 +108,20 @@ state, not repository setup: it does not cover aliases or commands with options 
 Bash shell may need `hash -r` once to forget a cached path to the system `ssh`; a new shell does not. Scripts that
 invoke `ssh` with options first, and `scp`, need the explicit process-scoped override instead.
 
-Helper scripts for a Windows host:
+Helper script for Linux and WSL (`scripts/qnx_vm_setup.py`):
 
-- `scripts/Initialize-QnxTrust.ps1 -VerifiedFingerprint 'MD5:...'` pins the VM host key after you compared it on the
-  VM console (`ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub`).
-- `scripts/Connect-QnxBootstrap.ps1` installs your public key for the build user (password typed by you, not stored).
-- `scripts/Invoke-QnxBuild.ps1 -Action Probe` checks the toolchain; `build.cmd` builds and runs `src/hello_nbt.cpp` as a
-  smoke test.
+- `python3 scripts/qnx_vm_setup.py init-trust --verified-fingerprint 'MD5:...'` verifies and pins the VM host key into
+  `.local/known_hosts` after you compare it on the VM console (`ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub`).
+- `python3 scripts/qnx_vm_setup.py setup` creates `~/.ssh/nbt_qnx_build_rsa` (with `0700`/`0600` permissions), writes
+  `.local/ssh_config` without overwriting an existing config, and runs `bootstrap` to install your public key for the
+  build user (password typed interactively into `ssh`, never stored).
+- `python3 scripts/qnx_vm_setup.py probe` checks the VM identity and `qcc` toolchain;
+  `python3 scripts/qnx_vm_setup.py smoke-build` builds and runs `src/hello_nbt.cpp` in the VM and verifies the ELF32
+  i386 artifact.
 
-These PowerShell helpers are tied to the documented `192.168.56.10` VM and, for key bootstrapping,
-`192.168.56.1` host; older VM protocol-test scripts also require `192.168.56.10`. Do not bypass these target checks
-for a different VM.
+These subcommands default to `192.168.56.10` (override with `--vm-host`) and, for key bootstrapping, restrict
+`authorized_keys` to `192.168.56.1` (override with `--allow-from`). Older VM protocol-test scripts also require
+`192.168.56.10`. Do not bypass target checks without verifying the VM identity.
 
 Environment for every build shell in the VM:
 
@@ -146,30 +157,20 @@ Which program is built from which files: [src/README.md](../src/README.md).
 ### Every build
 
 ```sh
-python scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
+python3 scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
 ```
 
-On Fedora WSL, if the [process-scoped SHA-1 override](#trust-and-connection) is required, apply it to the build
-process so both its `ssh` and `scp` children inherit it:
+On Fedora WSL (or other Linux distributions whose OpenSSL blocks SHA-1 signatures), apply the
+[process-scoped SHA-1 override](#trust-and-connection) to the build process so both its `ssh` and `scp` children
+inherit it:
 
 ```sh
 OPENSSL_ENABLE_SHA1_SIGNATURES=1 python3 scripts/build_all.py --host qnx-build
 ```
 
-Alternatively, from WSL use Windows OpenSSH without disabling host-key verification:
-
-```sh
-python3 scripts/build_all.py --windows-openssh --host qnx-build
-```
-
-This uses `/mnt/c/Windows/System32/OpenSSH/{ssh,scp}.exe` and `wslpath` to convert local paths, including the
-pinned `known_hosts` file. The SSH configuration must name a Windows-accessible key and Windows must be able to reach
-the VM. Windows Git may report a false executable-bit change on a WSL checkout: verify its status with Linux Git before
-using a process-scoped `core.filemode=false` override for a Windows build. Do not ignore actual source modifications or
-add a global Git trust exception. For a checkout or worktree
-without its own `.local` inputs, pass `--ssh-config`, `--known-hosts`, and `--nbt-aad` pointing to the existing
-files and pinned reference checkout. If the key path is missing or trust fails, fix the VM configuration; do not
-disable host-key checks. A successful VM build does not install or test anything on the car.
+For a checkout or worktree without its own `.local` inputs, pass `--ssh-config`, `--known-hosts`, and `--nbt-aad`
+pointing to the existing files and pinned reference checkout. If the key path is missing or trust fails, fix the VM
+configuration; do not disable host-key checks. A successful VM build does not install or test anything on the car.
 
 `--identity <key>` if your SSH config does not name the VM key; `--compare` is optional (an installer payload, for
 example unpacked from a release ZIP). The run takes about 5 minutes (most of it Mbed TLS) and leaves:
@@ -204,16 +205,17 @@ read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped prog
 
 ## Installer and release
 
-1. `python installer/make_payload.py <version> [--built build/qnx-build-<time>] [--pem-dir <folder>]`
-   collects everything into `installer/payload/` and writes `manifest.json` with SHA-256 per file. `--built`
-   defaults to the newest `build/qnx-build-*` folder with `programs/`; `--pem-dir` defaults to `installer/payload/rt`
-   (the PEM files are read before the folder is replaced; on a fresh checkout take them from `rt/` of a release payload).
-2. `installer/build_windows.ps1` builds the Windows .exe, `installer/build_mac.sh` the macOS app (on a Mac).
-   paramiko must stay below 4 (the NBT only offers `ssh-rsa`).
+1. `python3 installer/make_payload.py <version> --built build/qnx-build-<time>-<id> [--pem-dir <folder>]`
+   collects the QNX VM build into `installer/payload/` and writes `manifest.json` with SHA-256 per file. Always pass
+   the explicit `--built` directory produced by `scripts/build_all.py` so there is no ambiguity about which build is
+   packaged. `--pem-dir` defaults to `installer/payload/rt` (the PEM files are read before the folder is replaced; on a
+   fresh checkout take them from `rt/` of a release payload).
+2. Run the Python installer directly on Linux or WSL (`pip3 install "paramiko>=3.4,<4"` — paramiko must stay below 4
+   because the NBT only offers `ssh-rsa`). No platform-packaged installer binaries are built.
 3. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install
    below a test folder instead of the system. Then test on a car.
 
-Release assets: the Windows .exe, the Python package ZIP (installer + payload), and SHA-256 sums.
+Release assets: the Python installer + payload archive and SHA-256 sums.
 
 The older test scripts `scripts/Test-QnxTls.py`, `Test-AndroidAutoCore.py` and `Test-AndroidAutoSession.py` still run
 the offline TLS and protocol tests (simulated phone) in the VM.

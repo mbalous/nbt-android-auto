@@ -1,6 +1,6 @@
 #!/bin/sh
 # One-time setup of the open QNX 6.5.0 x86 toolchain (GCC 4.4.2), no QNX SDP, licence or VM needed.
-# Needs Docker (Apple Silicon: amd64 emulation via Rosetta is used). Takes about 15-30 minutes.
+# Needs Docker on Linux or WSL. Takes about 15-30 minutes.
 # Result: build/qnx-open (compilers + sysroot), used by toolchain/qnx-open and scripts/build_open.py.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

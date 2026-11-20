@@ -1,7 +1,7 @@
 #!/bin/sh
 # Start the native live-video mode on the car, RAM only (nothing persistent is changed).
 # Send with: python tools\nbt_request.py "tr -d '\015' | sh -s" --input-file scripts\car-live-video-start.sh --timeout 60
-# Preconditions (uploaded to /fs/ram3/nbt-video-test first, see docs/NATIVE-VIDEO-CAR-RUNBOOK.md):
+# Preconditions (uploaded to /fs/ram3/nbt-video-test first):
 #   native_service_live (built from src/android_auto/nbt_native_service.c), nbt_live_file (nbt_live_file.c)
 # The USB stick with a video file of the SAME NAME as SHADOW must be plugged in: the stock HMI lists that file and
 # nbt_live_file overlays its path with the live H.264 stream. The car has no head/printf/env/rmdir.

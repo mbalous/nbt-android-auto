@@ -108,7 +108,7 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.watch_seconds <= 1800:
         parser.error("--watch-seconds must be between 0 and 1800")
-    adb = shutil.which("adb") or shutil.which("adb.exe")
+    adb = shutil.which("adb")
     if not adb:
         parser.exit(1, "adb not found. Install Android SDK Platform-Tools or put it on PATH.\n")
     try:

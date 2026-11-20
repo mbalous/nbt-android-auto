@@ -15,18 +15,26 @@ The stock NBT does not accept SSH logins, so SSH must first be unlocked.
 
 Enabling SSH changes the device configuration. As with everything here, you do it at your own risk.
 
-## Usage
+## Usage (Linux and WSL)
 
 If upgrading from a version before the executable rename, uninstall the previous package first and restart iDrive.
 The installer does not migrate old files automatically.
 
-1. Connect the laptop to the car with an ENET cable and switch on the ignition. The usual NBT address is `169.254.199.99`.
-2. Start the installer:
-   - Windows: `NBT-AndroidAuto-Installer.exe`
-   - macOS: `NBT-AndroidAuto-Installer.app`. On first use, right-click and choose Open because the app is unsigned.
-3. Enter the IP address and password, then click **Install / Update**.
-4. Restart iDrive.
-5. Connect the phone over USB and select **Multimedia → Android Auto**.
+1. Connect the Linux or WSL laptop to the car with an ENET cable and switch on the ignition. The usual NBT address is
+   `169.254.199.99`. On WSL, ensure the ENET link-local interface (`169.254.x.x`) is reachable from Linux (for example,
+   with WSL mirrored networking) and use `--cli` if no X11/WSLg display is available.
+2. Install the Python dependency (once):
+   ```sh
+   pip3 install "paramiko>=3.4,<4"   # paramiko 4+ no longer supports the NBT's old ssh-rsa
+   ```
+3. Start the installer (the `payload/` folder must be next to `nbt_aa_installer.py`):
+   ```sh
+   python3 installer/nbt_aa_installer.py                  # GUI (requires tkinter + X11/Wayland/WSLg)
+   python3 installer/nbt_aa_installer.py --cli install    # terminal (works headless on Linux/WSL)
+   ```
+4. Enter the IP address and password, then install.
+5. Restart iDrive.
+6. Connect the phone over USB and select **Multimedia → Android Auto**.
 
 ## Android Auto features on the NBT
 
@@ -61,20 +69,12 @@ example to attach to a bug report.
 Each file is first written as `.tmp`, read back and compared byte for byte, and only then renamed. No other system
 files are changed.
 
-## Without a packaged app (Windows, macOS, Linux)
-
-```
-pip3 install "paramiko>=3.4,<4"   # paramiko 4+ no longer supports the NBT's old ssh-rsa
-python3 nbt_aa_installer.py                  # window
-python3 nbt_aa_installer.py --cli install    # terminal
-```
-
-The `payload/` folder must be next to the script.
+## Verified SSH host-key checking
 
 For verified SSH host-key checking, pass an OpenSSH `known_hosts` file containing the independently verified NBT key:
 
-```
-python3 nbt_aa_installer.py --cli install --host 169.254.199.99 --known-hosts /path/to/known_hosts
+```sh
+python3 installer/nbt_aa_installer.py --cli install --host 169.254.199.99 --known-hosts /path/to/known_hosts
 ```
 
 Unknown or changed keys are rejected before authentication. Verify the fingerprint through a trusted channel first;
@@ -97,8 +97,11 @@ the head unit is no longer available. Logs may contain vehicle and phone details
 
 ## For developers
 
-- `python installer/make_payload.py [version] --built build/qnx-build-<time>` collects the build files in `installer/payload/`.
-  `manifest.json` contains the SHA-256 for each file. The folder is not checked in.
-- `installer/build_windows.ps1` builds the Windows executable. `installer/build_mac.sh` builds the app on a Mac.
+- Build vehicle binaries in the QNX 6.5.0 VM (`python3 scripts/build_all.py`), then assemble the payload from that
+  specific build directory:
+  `python3 installer/make_payload.py <version> --built build/qnx-build-<time>-<id>`
+  collects the build files in `installer/payload/`. `manifest.json` contains the SHA-256 for each file. The folder is
+  not checked in.
+- The installer is distributed and run directly with Python 3 on Linux and WSL (no packaged OS binaries).
 - For testing in a QNX VM, the hidden `--key <ssh-key>` and `--root <test-directory>` options install under a test
   directory instead of the system paths.

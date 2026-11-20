@@ -80,9 +80,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Installer
 
-The installer app bundles Python, Tcl/Tk and paramiko (LGPL-2.1, <https://www.paramiko.org/>) with its dependencies
-(cryptography, bcrypt, PyNaCl, cffi; Apache-2.0/BSD/MIT), packed with PyInstaller (GPL-2.0 with bootloader
-exception). Their licenses ship inside the packaged app; the Python version uses them as installed by `pip`.
+The Python installer uses Tcl/Tk (`tkinter`) and paramiko (LGPL-2.1, <https://www.paramiko.org/>) with its
+dependencies (cryptography, bcrypt, PyNaCl, cffi; Apache-2.0/BSD/MIT) as installed in your Python environment via
+`pip`.
 
 ## Not included
 

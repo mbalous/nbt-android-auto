@@ -9,30 +9,23 @@ import build_all
 
 
 class QnxBuildTests(unittest.TestCase):
-    def test_windows_openssh_converts_local_paths_and_keeps_host_key_checks(self):
+    def test_native_openssh_options_keep_host_key_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, known, identity = (root / name for name in ("config", "known_hosts", "key"))
             for path in (config, known, identity):
                 path.touch()
-            with mock.patch.object(build_all.shutil, "which", return_value="/usr/bin/wslpath"), \
-                    mock.patch.object(Path, "is_file", return_value=True), \
-                    mock.patch.object(build_all.subprocess, "check_output",
-                                      side_effect=lambda command, **kwargs: "\\\\wsl.localhost\\Distro\\" +
-                                      Path(command[-1]).name + "\n"):
-                client = build_all.OpenSSH(windows=True)
-                options = client.options(config, known, identity)
-                self.assertEqual(options, [
-                    "-F", "\\\\wsl.localhost\\Distro\\config",
-                    "-o", "UserKnownHostsFile=//wsl.localhost/Distro/known_hosts",
-                    "-i", "\\\\wsl.localhost\\Distro\\key",
-                    "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"])
-                command = client.copy(options, root / "source.tar", "qnx-build:.nbt-build/test/source.tar")
-                self.assertEqual(command[-2:], ["\\\\wsl.localhost\\Distro\\source.tar",
-                                                 "qnx-build:.nbt-build/test/source.tar"])
-                command = client.copy(options, "qnx-build:.nbt-build/test/out/app", root / "app")
-                self.assertEqual(command[-2:], ["qnx-build:.nbt-build/test/out/app",
-                                                 "\\\\wsl.localhost\\Distro\\app"])
+            client = build_all.OpenSSH()
+            options = client.options(config, known, identity)
+            self.assertEqual(options, [
+                "-F", str(config),
+                "-o", "UserKnownHostsFile=" + known.as_posix(),
+                "-i", str(identity),
+                "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"])
+            command = client.copy(options, root / "source.tar", "qnx-build:.nbt-build/test/source.tar")
+            self.assertEqual(command[:3], ["scp", "-O", "-q"])
+            self.assertEqual(command[-2:], [str(root / "source.tar"),
+                                            "qnx-build:.nbt-build/test/source.tar"])
 
     def test_native_openssh_preserves_paths(self):
         client = build_all.OpenSSH()

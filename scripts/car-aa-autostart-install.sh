@@ -1,6 +1,6 @@
 #!/bin/sh
 # Persistent Android Auto package for the automatic start by the "Android Auto" plugin (2026-11-07).
-# Copies the current RAM test binaries (/fs/ram3/nbt-video-test, uploaded by scripts\Upload-NbtAaTest.ps1) and the
+# Copies the current RAM test binaries (/fs/ram3/nbt-video-test, uploaded by scripts/upload_nbt_aa_test.py) and the
 # unchanged helpers/certificates of the older persistent package into a NEW directory; nothing else is touched.
 # Send with: python tools\nbt_request.py "tr -d '\015' | sh -s" --input-file scripts\car-aa-autostart-install.sh
 # The boot script itself is uploaded separately as /fs/ram3/nbt-aa-boot.sh.

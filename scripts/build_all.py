@@ -151,19 +151,12 @@ def add_expected(archive, payload):
 
 
 class OpenSSH:
-    def __init__(self, windows=False):
-        self.windows = windows
-        prefix = "/mnt/c/Windows/System32/OpenSSH/"
-        self.ssh = prefix + "ssh.exe" if windows else "ssh"
-        self.scp = prefix + "scp.exe" if windows else "scp"
-        if windows and (not Path(self.ssh).is_file() or not Path(self.scp).is_file() or not shutil.which("wslpath")):
-            raise SystemExit("--windows-openssh requires WSL, wslpath, and Windows OpenSSH ssh.exe/scp.exe")
+    def __init__(self):
+        self.ssh = "ssh"
+        self.scp = "scp"
 
     def local_path(self, path, forward_slashes=False):
-        if not self.windows:
-            return Path(path).as_posix() if forward_slashes else str(path)
-        converted = subprocess.check_output(["wslpath", "-w", str(Path(path).resolve())], text=True).strip()
-        return converted.replace("\\", "/") if forward_slashes else converted
+        return Path(path).as_posix() if forward_slashes else str(path)
 
     def options(self, config, known_hosts, identity):
         options = []
@@ -208,8 +201,6 @@ def main():
     parser.add_argument("--ssh-config", type=Path, default=ROOT / ".local/ssh_config")
     parser.add_argument("--known-hosts", type=Path, default=ROOT / ".local/known_hosts")
     parser.add_argument("--identity", type=Path, help="ssh private key for the VM (if not set in the ssh config)")
-    parser.add_argument("--windows-openssh", action="store_true",
-                        help="use Windows OpenSSH from WSL, converting local paths for ssh.exe/scp.exe")
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
                         help="NBT-AAD checkout at commit %s" % NBT_AAD_REVISION[:7])
     parser.add_argument("--hmi-libs", default="$HOME/.nbt-build/hmi-libs",
@@ -217,7 +208,7 @@ def main():
     parser.add_argument("--compare", type=Path, help="installer payload folder to compare with (e.g. installer/payload)")
     args = parser.parse_args()
 
-    client = OpenSSH(args.windows_openssh)
+    client = OpenSSH()
     ssh = client.options(args.ssh_config, args.known_hosts, args.identity)
 
     def remote(command, timeout=60):
