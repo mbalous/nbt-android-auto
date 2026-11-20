@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/qnx-open
-          key: qnx-open-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/**') }}
+          key: qnx-open-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/Dockerfile', 'toolchain/*.sh', 'toolchain/qnx-open', 'toolchain/runtime/**', 'toolchain/sysroot/**', 'toolchain/patches/**') }}
       - name: Build open QNX toolchain
         if: steps.qnx-cache.outputs.cache-hit != 'true'
         run: toolchain/setup.sh
@@ -42,7 +42,31 @@ jobs:
           docker build --platform linux/amd64 -t qnx-open-host toolchain
           toolchain/qnx-open i486-pc-nto-qnx6.5.0-g++ -O2 -o /repo/build/hello_nbt /repo/src/hello_nbt.cpp
       - name: Cross-build supported programs
-        run: python3 scripts/build_open.py
+        run: python3 scripts/build_open.py --output-dir build/open-ci
+      - name: Record ELF metadata and hashes
+        run: |
+          cd build/open-ci
+          for binary in programs/*; do
+            case "$binary" in *.sh) continue;; esac
+            test -s "$binary"
+            readelf -h "$binary" | grep -q 'Class:.*ELF32'
+            readelf -h "$binary" | grep -q 'Machine:.*Intel 80386'
+            sha256sum "$binary" >> SHA256SUMS
+            printf '\n===== %s =====\n' "$binary" >> elf-report.txt
+            readelf -W -h -l -d -V --dyn-syms "$binary" >> elf-report.txt
+          done
+      - name: Upload experimental open-build outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: open-qnx-build-${{ github.sha }}
+          path: |
+            build/open-ci/programs/
+            build/open-ci/plugin-resources/
+            build/open-ci/build.log
+            build/open-ci/SHA256SUMS
+            build/open-ci/elf-report.txt
+          if-no-files-found: error
+          retention-days: 14
 
   host-tests:
     name: Host C++ (${{ matrix.mode }})
