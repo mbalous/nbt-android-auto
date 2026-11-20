@@ -33,16 +33,75 @@ is reused from the release. One command: `./flash-aa-open.sh --build-only`.
 
 ## QNX VM
 
-The development VM used a host-only network (`192.168.56.10`, host `192.168.56.1`) and an unprivileged build user
-`nbtbuild` with key login. After each VM start, as root on the VM console:
+The development VM uses a host-only network and an unprivileged build user (`nbtbuild`). The historical static
+addresses were VM `192.168.56.10` and host `192.168.56.1`; DHCP can assign a different VM address. Check the VM's
+actual address at its console (`ifconfig en0`) and the host-only network before connecting. The build VM is not the car.
+
+If using the historical static configuration, after each VM start, as root on the VM console:
 
 ```sh
 slay dhcp.client; ifconfig en0 192.168.56.10; /usr/sbin/sshd
 ```
 
+Do not run that command blindly on a differently configured network: stopping DHCP and changing the address disrupts
+existing connections. On a fresh QNX installation, create a non-root build account and set a nonempty password
+interactively; verify the VM's SSH authentication settings. Start `sshd` on the VM if it is not already listening.
+
+### Trust and connection
+
+Copy `config/ssh_config.example` to `.local/ssh_config` and set `HostName` to the actual VM address, `User` to the build
+user, and `IdentityFile` to your private key. Keep private keys and passwords out of the repository. The build scripts
+use key authentication in batch mode, even if an interactive password login works.
+
+Verify the host key independently on the VM console before trusting it:
+
+```sh
+ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub
+```
+
+For Linux or WSL, scan the VM address into a temporary candidate file, then compare its fingerprint with the console
+output (use the same fingerprint format on both sides):
+
+```sh
+mkdir -p .local
+umask 077
+VM_IP=192.168.56.10  # Replace with the VM's actual address.
+candidate=$(mktemp .local/qnx-host-key.XXXXXX)
+ssh-keyscan -T 5 -t rsa "$VM_IP" > "$candidate"
+ssh-keygen -E md5 -lf "$candidate"
+```
+
+Only after the fingerprints match, add the candidate key to `.local/known_hosts`; preserve any existing entries and
+investigate conflicts rather than overwriting them. A key obtained by scanning the network alone is not verified.
+The build scripts use `.local/ssh_config` and `.local/known_hosts` by default; ordinary `ssh` uses `~/.ssh/config` and
+`~/.ssh/known_hosts` unless told otherwise. Do not commit either known-hosts file.
+
+QNX OpenSSH 5.2 may offer only the legacy RSA/SHA-1 host-key signature. If negotiation fails, enable
+`HostKeyAlgorithms +ssh-rsa` in the `qnx-build` host block. Fedora 44 WSL also required
+`PubkeyAcceptedAlgorithms +ssh-rsa` even for password login; it can also be needed for RSA key authentication.
+Add `MACs +hmac-sha1` only if no MAC matches. Keep these exceptions limited to the VM. No key-exchange downgrade was
+needed for the observed VM.
+
+Some Linux distributions also block SHA-1 signatures in OpenSSL: Fedora 44 WSL required the following process-scoped
+override, in addition to the host-specific SSH options. Run this from the repository after verifying the host key:
+
+```sh
+OPENSSL_ENABLE_SHA1_SIGNATURES=1 ssh -F .local/ssh_config \
+  -o UserKnownHostsFile=.local/known_hosts -o StrictHostKeyChecking=yes qnx-build 'id; uname -a'
+```
+
+If the client reports `no matching host key type found` or `error in libcrypto`, check both SSH options and the
+distribution's crypto policy. The override weakens signature policy for that process; do not enable it globally.
+Prefer upgrading the VM's SSH server to support modern host-key signatures when possible.
+
+One WSL setup also uses `~/.local/bin/ssh` as a local wrapper to apply the OpenSSL override when the first argument is
+the VM's literal IP or `user@IP`, with the SSH algorithm options in `~/.ssh/config` for that IP. This is local machine
+state, not repository setup: it does not cover aliases or commands with options before the destination. An existing
+Bash shell may need `hash -r` once to forget a cached path to the system `ssh`; a new shell does not. Scripts that
+invoke `ssh` with options first, and `scp`, need the explicit process-scoped override instead.
+
 Helper scripts for a Windows host:
 
-- `config/ssh_config.example` → copy to `.local/ssh_config` and fill in user and key path.
 - `scripts/Initialize-QnxTrust.ps1 -VerifiedFingerprint 'MD5:...'` pins the VM host key after you compared it on the
   VM console (`ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub`).
 - `scripts/Connect-QnxBootstrap.ps1` installs your public key for the build user (password typed by you, not stored).
@@ -50,15 +109,8 @@ Helper scripts for a Windows host:
   smoke test.
 
 These PowerShell helpers are tied to the documented `192.168.56.10` VM and, for key bootstrapping,
-`192.168.56.1` host. If VirtualBox uses another host-only address, do not point them at a different machine or disable
-their checks. Configure the actual VM address explicitly and verify its SSH host key at the VM console before trusting
-it. On a fresh QNX installation, root can create a non-root build account interactively with `passwd nbtbuild`;
-choose a nonempty password and verify the VM's SSH authentication settings.
-
-The old QNX OpenSSH 5.2 needs `HostKeyAlgorithms +ssh-rsa` and `MACs +hmac-sha1` (only for this host).
-The PowerShell bootstrap helpers and older VM protocol-test scripts are restricted to `192.168.56.10`; do not
-weaken their target checks for a different VM. Configure its actual address in the SSH alias and independently
-verify its host key. The build VM is not the car.
+`192.168.56.1` host; older VM protocol-test scripts also require `192.168.56.10`. Do not bypass these target checks
+for a different VM.
 
 Environment for every build shell in the VM:
 
@@ -88,28 +140,30 @@ Which program is built from which files: [src/README.md](../src/README.md).
 3. SSH from your PC to the VM works with a key (see [QNX VM](#qnx-vm)); the build runs as the normal VM user, not root.
    Mbed TLS 3.6.7 is downloaded automatically on the first run (SHA-256 checked).
 
-On Windows with a checkout in WSL, use the Windows OpenSSH client if the WSL OpenSSH build cannot negotiate the VM's
-legacy `ssh-rsa` host key. Check that the selected host can reach the VM and that Git for Windows is on its PATH.
-Windows Git may report a false executable-bit change on a WSL checkout: verify its status with Linux Git before using a
-process-scoped `core.filemode=false` override for the Windows build. Do not ignore actual source modifications or add a
-global Git trust exception. Windows OpenSSH needs forward-slash UNC paths for `UserKnownHostsFile`; `build_all.py`
-normalizes that argument.
-
 ### Every build
 
 ```sh
 python scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
 ```
 
-From WSL, if Linux OpenSSH fails with `error in libcrypto` while verifying the VM's legacy `ssh-rsa` host key,
-use Windows OpenSSH instead, without disabling host-key verification:
+On Fedora WSL, if the [process-scoped SHA-1 override](#trust-and-connection) is required, apply it to the build
+process so both its `ssh` and `scp` children inherit it:
+
+```sh
+OPENSSL_ENABLE_SHA1_SIGNATURES=1 python3 scripts/build_all.py --host qnx-build
+```
+
+Alternatively, from WSL use Windows OpenSSH without disabling host-key verification:
 
 ```sh
 python3 scripts/build_all.py --windows-openssh --host qnx-build
 ```
 
 This uses `/mnt/c/Windows/System32/OpenSSH/{ssh,scp}.exe` and `wslpath` to convert local paths, including the
-pinned `known_hosts` file. The SSH configuration must name a Windows-accessible key. For a checkout or worktree
+pinned `known_hosts` file. The SSH configuration must name a Windows-accessible key and Windows must be able to reach
+the VM. Windows Git may report a false executable-bit change on a WSL checkout: verify its status with Linux Git before
+using a process-scoped `core.filemode=false` override for a Windows build. Do not ignore actual source modifications or
+add a global Git trust exception. For a checkout or worktree
 without its own `.local` inputs, pass `--ssh-config`, `--known-hosts`, and `--nbt-aad` pointing to the existing
 files and pinned reference checkout. If the key path is missing or trust fails, fix the VM configuration; do not
 disable host-key checks. A successful VM build does not install or test anything on the car.
