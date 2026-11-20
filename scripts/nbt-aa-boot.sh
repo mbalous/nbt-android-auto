@@ -1,6 +1,6 @@
 #!/bin/sh
 # Android Auto on the original NBT: start the service from the PERSISTENT package (installed by car-aa-autostart-install.sh).
-# Started by the "Android Auto" HMI plugin (libNbtAndroidAuto.so) ~15 s after the HMI loaded it, and again when the page
+# Started by the "Android Auto" HMI plugin (libNbtAndroidAuto.so) when the HMI loads it, and again when the page
 # is opened while the service is not running. Also usable by hand: sh /var/opt/hmi/data/rw/NbtAndroidAutoRT/boot.sh
 # Hardware video path (VideoApp, car-proven 2026-11-07), iDrive controller (nbt_knob), RAM only at runtime.
 # Disable the automatic start: touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/disabled
@@ -16,6 +16,9 @@ chmod 700 $R
 for f in native_service nbt_android_auto nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
   cp $P/$f $R/$f && chmod 700 $R/$f
 done
+# io-nme's global options as they are at boot, saved by decode_runner on its first start (2026-11-12, see
+# nbt_decode_runner.cpp): a new boot takes a new copy
+rm -f $R/nme-options.saved $R/nme-options.saved.tmp
 cp $P/cert.pem $P/key.pem $P/ca.pem $R/ && chmod 600 $R/*.pem
 cp /opt/mm/bin/NmeCmdLine /opt/mm/lib/cinemo/cinemo_classes.xml /opt/mm/lib/cinemo/cinemo_links.xml $R/
 chmod 700 $R/NmeCmdLine
@@ -23,30 +26,21 @@ touch $R/hw.mode
 # optional sharper picture: phone sends 1280x720 (touch $P/res720 to enable, rm to go back to 800x480)
 rm -f $R/res720
 if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
-# Android Auto sound over the AA connection, on by default (docs/AA-AUDIO-PLAN.md): audioconn
-# (nbt_audioconn) asks the car's ConnectionMaster for the browser audio connection 0xb8.
-#   Back to Bluetooth:  touch $P/bt-audio   (rm $P/bt-audio = Android Auto sound again)
-#   Optional experiment: $P/aa-audio, first line another connection id ("0" = play without a route)
-# A refused / unanswered route switches to Bluetooth by itself until the next reboot ($R/audio-route.failed).
-rm -f $R/aa-audio $R/audioconn $R/bt-audio
+# Default: Android Auto sound on main source f6. aa-audio selects the alternative browser route.
+# bt-audio selects Bluetooth; media-jack selects phone audio through AUX.
+rm -f $R/aa-audio $R/audioconn $R/bt-audio $R/media-jack $R/prompts-off
 if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
 if test -e $P/aa-audio; then cp $P/aa-audio $R/aa-audio; fi
-if test -e $P/bt-audio; then
-  touch $R/bt-audio; echo 'audio: Bluetooth (bt-audio)'
-elif test ! -e /opt/sys/lib/liba2i_client.so -a ! -e $P/aa-audio; then
-  echo 'audio: Bluetooth (no liba2i_client on this NBT)'
-elif test -e $R/audio-route.failed; then
-  echo "audio: Bluetooth (route failed earlier: `sed 1q $R/audio-route.failed`)"
-elif test -e $R/audio-output.failed; then
-  echo "audio: Bluetooth (output failed earlier: `sed 1q $R/audio-output.failed`)"
-elif test -e $R/audio-route.built; then
-  echo 'audio: Bluetooth (route cleanup pending)'
-else
-  echo "audio: Android Auto (`sed 1q $R/aa-audio 2>/dev/null || echo 0xb8`)"
-fi
+if test -e $P/media-jack; then touch $R/media-jack; fi
+if test -e $P/prompts-off; then touch $R/prompts-off; fi
+if test -e $P/bt-audio; then touch $R/bt-audio; fi
+echo 'audio: mode selected by native_service'
 rm -f $R/wal.args $R/shadow.path
-# the plugin page exists: the phone is only switched after the page was opened once
-if test -e /fs/ram3/nbt-aa-hidden -o -e /fs/ram3/nbt-aa-request; then touch $R/gate.mode; fi
+# No gate (user 2026-11-12): the phone is taken at once, the session runs in the background and the picture stays hidden
+# (/fs/ram3/nbt-aa-hidden) until the Android Auto page is opened. The old behaviour (phone only after the page was opened
+# once): touch $P/gate-on
+rm -f $R/gate.mode
+if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
 DPI=140
 if test -f $P/vid.dpi; then DPI=`sed 1q $P/vid.dpi`; fi
 # picture mode (car-tested 2026-11-08), one flag file in $P, none = classic 800x300 stretched to the whole display:

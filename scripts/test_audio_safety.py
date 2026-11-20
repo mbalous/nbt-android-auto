@@ -156,6 +156,24 @@ int A2I_Client_Out_Write(void *h, const void *b, unsigned long n, unsigned x) {
         output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
         self.assertIn("test mode=bt", output)
 
+    def test_audio_modes_select_source_and_prompt_route(self):
+        executable = self.runtime / "audioconn"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o700)
+        output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
+        self.assertIn("test media=input_stereo_1 source=f6 prompts=b8", output)
+        (self.runtime / "prompts-off").touch()
+        output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
+        self.assertIn("test media=input_stereo_1 source=f6 prompts=0", output)
+        (self.runtime / "media-jack").touch()
+        output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
+        self.assertIn("test media=(unset) source=bb prompts=0", output)
+        (self.runtime / "media-jack").unlink()
+        (self.runtime / "aa-audio").write_text("0xb8\n")
+        output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
+        self.assertIn("test mode=browser", output)
+        self.assertIn("test media=(unset) source=bb prompts=0", output)
+
     def test_wait_idle_drains_route_callback(self):
         executable = self.root / "slow-route"
         executable.write_text('#!/bin/sh\ntouch "$TEST_ROUTE_STARTED"\nsleep 0.4\n')

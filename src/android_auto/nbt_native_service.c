@@ -20,8 +20,10 @@
  *   center800   phone canvas 800x480 1:1 in the middle of the display      split800  same, at the left edge
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
- *   bt-audio    Bluetooth sound instead of the default Android Auto sound (see set_audio_mode)
- *   aa-audio    optional: another ConnectionMaster connection for the Android Auto sound (experiment)
+ *   bt-audio    Bluetooth sound instead of Android Auto sound
+ *   media-jack  phone jack / AUX sound
+ *   aa-audio    browser audio route instead of the default f6 media source (optional connection id)
+ *   prompts-off disable prompts over other car sources in f6 mode
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *
@@ -61,30 +63,39 @@ static long long ms(void)
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-/* Android Auto audio (docs/AA-AUDIO-PLAN.md). On by default: the phone sends media, guidance
- * and system audio over Android Auto, nbt_android_auto plays it through the car's browser audio front end (NBT-AAD browser
- * mode, A2I input_stereo_3), and audioconn (= nbt_audioconn) asks the car's ConnectionMaster for connection 0xb8 so the
- * speakers play it (car-verified on a BMW F07 2014 with the original HU_NBT).
- * Bluetooth audio instead (media sink ch 9 not offered, the phone keeps playing over Bluetooth) when:
- *   bt-audio              the user's switch (boot.sh copies it from the package directory)
- *   audio-route.failed    nbt_audioconn's last build was refused / not answered (RAM: until the next reboot)
- *   audio-output.failed   the output library or endpoint failed
- *   audio-route.built     a previous route still needs cleanup
- *   no audioconn          nothing could route the sound, it would only be silent
- * aa-audio (optional, experiment): first line = another connection id; "0" plays unrouted (old behaviour).
- * Evaluated before every session, so a failed route falls back to Bluetooth from the next session on. */
+/* Default to the f6 main source and mediaout mixer. aa-audio selects the alternative BrowserAudio route;
+ * bt-audio and media-jack override both. A failed output or pending browser route falls back on the next session.
+ * The knob reads its environment only at startup; its mode is tracked so it can be restarted between sessions. */
+static int audio_knob_mode = -1;
 static void set_audio_mode(void)
 {
+    static int saved;
+    static char *source, *opens, *play, *nav, *pause, *wheel, *media, *prompt, *prompt_conn;
     FILE* f;
     char line[32] = "";
     char* end = 0;
     unsigned long conn = 0xb8;
     int explicit_file = 0;
+    int jack = !access("media-jack", F_OK);
     const char* why = 0;
-    if (!access("bt-audio", F_OK))
+    if (!saved) {
+#define SAVE_AUDIO_ENV(var, name) do { const char* v = getenv(name); if (v) var = strdup(v); } while (0)
+        SAVE_AUDIO_ENV(source, "NBT_AUX_SOURCE");
+        SAVE_AUDIO_ENV(opens, "NBT_AUX_OPENS_AA");
+        SAVE_AUDIO_ENV(play, "NBT_PLAY_AUX");
+        SAVE_AUDIO_ENV(nav, "NBT_NAV_AUDIO");
+        SAVE_AUDIO_ENV(pause, "NBT_AUX_PAUSE");
+        SAVE_AUDIO_ENV(wheel, "NBT_WHEEL_AUX_ONLY");
+        SAVE_AUDIO_ENV(media, "NBT_AA_MEDIA_OUT");
+        SAVE_AUDIO_ENV(prompt, "NBT_AA_PROMPT_OUT");
+        SAVE_AUDIO_ENV(prompt_conn, "NBT_PROMPT_CONN");
+#undef SAVE_AUDIO_ENV
+        saved = 1;
+    }
+    if (jack)
+        why = "media-jack switch";
+    else if (!access("bt-audio", F_OK))
         why = "bt-audio switch";
-    else if (!access("audio-route.failed", F_OK))
-        why = "audio route failed earlier (audio-route.failed)";
     else if (!access("audio-output.failed", F_OK))
         why = "audio output failed earlier (audio-output.failed)";
     else if (!access("audio-route.built", F_OK))
@@ -104,6 +115,34 @@ static void set_audio_mode(void)
         }
         fclose(f);
     }
+    if (!why && explicit_file && !access("audio-route.failed", F_OK))
+        why = "audio route failed earlier (audio-route.failed)";
+    unsetenv("NBT_AA_MEDIA_OUT");
+    unsetenv("NBT_AA_PROMPT_OUT");
+    unsetenv("NBT_AUDIOCONN");
+    unsetenv("NBT_GUIDANCE_BT");
+    if (!why && !explicit_file) {
+        int prompts = access("prompts-off", F_OK) && access("audio-route.failed", F_OK) &&
+                      !access("audioconn", X_OK) && (!prompt_conn || strtoul(prompt_conn, 0, 16));
+        printf("audio: Android Auto main source f6\n");
+        setenv("NBT_AUDIO_MODE", "bt", 1); /* mediaout, not BrowserAudio */
+        setenv("NBT_SDR_DROP", "2,4", 1);
+        setenv("NBT_AA_MEDIA_OUT", media && *media ? media : "input_stereo_1", 1);
+        setenv("NBT_GUIDANCE_BT", "0", 1);
+        if (prompts)
+            setenv("NBT_AA_PROMPT_OUT", prompt && *prompt ? prompt : "input_stereo_3", 1);
+        else
+            printf("audio: prompts over other sources disabled\n");
+        setenv("NBT_PROMPT_CONN", prompts ? (prompt_conn ? prompt_conn : "b8") : "0", 1);
+        setenv("NBT_AUX_SOURCE", source ? source : "f6", 1);
+        setenv("NBT_AUX_OPENS_AA", opens ? opens : "0", 1);
+        setenv("NBT_PLAY_AUX", play ? play : "1", 1);
+        setenv("NBT_NAV_AUDIO", nav ? nav : "1", 1);
+        setenv("NBT_AUX_PAUSE", pause ? pause : "1", 1);
+        setenv("NBT_WHEEL_AUX_ONLY", wheel ? wheel : "1", 1);
+        audio_knob_mode = prompts ? 1 : 3;
+        return;
+    }
     /* BrowserAudio's output device is A2I input_stereo_3 through liba2i_client (src/android_auto/audio_a2i; the original
      * HU_NBT has no libasound). Car-verified: connection 0xb8 granted and input_stereo_3 audible. */
     if (!why && !explicit_file && access("/opt/sys/lib/liba2i_client.so", F_OK))
@@ -115,29 +154,33 @@ static void set_audio_mode(void)
             why = "no audioconn program";
     }
     if (why) {
-        printf("audio: Bluetooth (%s)\n", why);
+        printf("audio: %s (%s)\n", jack ? "phone jack" : "Bluetooth", why);
         setenv("NBT_AUDIO_MODE", "bt", 1);
         setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
-        unsetenv("NBT_AUDIOCONN");
-        return;
+    } else {
+        snprintf(line, sizeof(line), "0x%lx", conn);
+        printf("audio: Android Auto browser, connection %s\n", line);
+        setenv("NBT_AUDIO_MODE", "browser", 1);
+        setenv("NBT_SDR_DROP", "2,4", 1);
+        setenv("NBT_BROWSER_CONN", line, 1);
+        setenv("NBT_AUDIOCONN_RETRIES", "2", 1);
+        if (conn)
+            setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
     }
-    snprintf(line, sizeof(line), "0x%lx", conn);
-    printf("audio: Android Auto, connection %s\n", line);
-    setenv("NBT_AUDIO_MODE", "browser", 1);
-    setenv("NBT_SDR_DROP", "2,4", 1); /* keep the media sink (ch 9) */
-    setenv("NBT_BROWSER_CONN", line, 1);
-    /* few retries: a car that refuses the route goes back to Bluetooth from the next session on */
-    setenv("NBT_AUDIOCONN_RETRIES", "2", 1);
-    if (conn) {
-        setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
-    } else
-        unsetenv("NBT_AUDIOCONN");
+    setenv("NBT_PROMPT_CONN", "0", 1);
+    setenv("NBT_AUX_SOURCE", jack && source ? source : "bb", 1);
+    setenv("NBT_AUX_OPENS_AA", jack ? (opens ? opens : "1") : "0", 1);
+    setenv("NBT_PLAY_AUX", jack ? (play ? play : "1") : "0", 1);
+    setenv("NBT_NAV_AUDIO", jack ? (nav ? nav : "1") : "0", 1);
+    setenv("NBT_AUX_PAUSE", jack ? (pause ? pause : "1") : "0", 1);
+    setenv("NBT_WHEEL_AUX_ONLY", jack ? (wheel ? wheel : "1") : "0", 1);
+    audio_knob_mode = jack ? 2 : 0;
 }
 
 /* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
  * nbt_android_auto ended without removing it (crash, kill, unplugged mid-song), remove it here. nbt_audioconn keeps
  * audio-route.built before sending a build, until a remove is granted. */
-static void audio_route_cleanup(void)
+static void audio_route_cleanup_impl(int force)
 {
     char cmd[160];
     char line[32], *end;
@@ -145,7 +188,7 @@ static void audio_route_cleanup(void)
     FILE* f;
     static long long last_attempt = -15000;
     int r;
-    if (access("audio-route.built", F_OK) || access("audioconn", X_OK) || ms() - last_attempt < 15000)
+    if (access("audio-route.built", F_OK) || access("audioconn", X_OK) || (!force && ms() - last_attempt < 15000))
         return;
     last_attempt = ms();
     f = fopen("audio-route.built", "r");
@@ -166,6 +209,11 @@ static void audio_route_cleanup(void)
     r = system(cmd);
     if (r)
         fprintf(stderr, "audio: route cleanup failed (%d), will retry\n", r);
+}
+
+static void audio_route_cleanup(void)
+{
+    audio_route_cleanup_impl(0);
 }
 
 /* ---- child processes ------------------------------------------------------------------------------------------- */
@@ -423,6 +471,32 @@ static int log_has(const char* path, const char* token)
     return hit;
 }
 
+/* USB reset of the phone through oneplus_native --reset (see oneplus_aoa.c); log of the last one in reset.log */
+static void reset_phone(int bus, int device, int type, int n)
+{
+    char bus_text[16], device_text[16];
+    char* args[] = {"./oneplus_native", "--reset", bus_text, device_text, 0};
+    Child c;
+    long long limit;
+    snprintf(bus_text, sizeof(bus_text), "%d", bus);
+    snprintf(device_text, sizeof(device_text), "%d", device);
+    if (type == PHONE_ACCESSORY)
+        setenv("NBT_RESET_AOA", "1", 1);
+    else {
+        char id[16];
+        snprintf(id, sizeof(id), "%04x:%04x", found_v, found_p);
+        setenv("NBT_PHONE_ID", id, 1);
+        unsetenv("NBT_RESET_AOA");
+    }
+    printf("native_service: failed attempt, USB reset %d of 3 (bus %d device %d)\n", n, bus, device);
+    c = spawn(args, 0, "reset.log");
+    limit = ms() + 10000;
+    while (alive(&c) && ms() < limit)
+        usleep(100000);
+    end(&c);
+    unsetenv("NBT_RESET_AOA");
+}
+
 /* read and discard everything currently in a non-blocking descriptor */
 static void drain(int fd)
 {
@@ -471,7 +545,8 @@ int main(int argc, char** argv)
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
-    int guard = -1, lock = -1, bus, device, type, attempts = 0;
+    int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
+    long long absent_since = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
     unsigned session = 0;
     char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16];
@@ -656,13 +731,30 @@ int main(int argc, char** argv)
         type = find_phone(&bus, &device);
         if (!type) {
             attempts = 0;
+            /* gone for more than 10 s: really unplugged (a USB reset of ours only makes it vanish for a moment) */
+            if (!absent_since)
+                absent_since = ms();
+            if (ms() - absent_since > 10000)
+                resets = 0;
             report(g_phone_present ? "several_devices" : "waiting_for_phone", session);
             sleep(1);
             continue;
         }
-        if (attempts >= 3) {
-            report("replug_required", session);
-            sleep(2);
+        absent_since = 0;
+        /* The last attempt failed (user 2026-11-12: after "Restart Android Auto" the phone often did not come back until
+         * it was replugged): reset its USB port, the software version of pulling the cable, and try again. "Reconnect the
+         * phone" only after 3 resets in a row; a real unplug (> 10 s) or a good session starts the count again. */
+        if (attempts > 0) {
+            if (resets >= 3) {
+                report("replug_required", session);
+                sleep(2);
+                continue;
+            }
+            ++resets;
+            report("connecting", session);
+            reset_phone(bus, device, type, resets);
+            attempts = 0;
+            sleep(3);
             continue;
         }
 
@@ -760,7 +852,17 @@ int main(int argc, char** argv)
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
         if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
             char* args[] = {"./nbt_android_auto", "--capture-video", bus_text, device_text, 0};
+            int previous_knob_mode = audio_knob_mode;
             set_audio_mode(); /* again per session: a failed audio route falls back to Bluetooth */
+            if (previous_knob_mode != audio_knob_mode && knob.pid) {
+                char* knob_args[] = {"./nbt_knob", 0};
+                end(&knob);
+                audio_route_cleanup_impl(1);
+                set_audio_mode();
+                setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+                knob = spawn(knob_args, 0, "knob.log");
+                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+            }
             snprintf(bus_text, sizeof(bus_text), "%d", bus);
             snprintf(device_text, sizeof(device_text), "%d", device);
             {
@@ -768,6 +870,7 @@ int main(int argc, char** argv)
                 snprintf(capname, sizeof(capname), "capture-%u.log", session);
                 /* /opt/sys/lib last: liba2i_client.so (A2I audio output) and what it links */
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH ":/opt/sys/lib", 1);
+                unlink("/fs/ram3/nbt-aa-media"); /* the phone's media state, written anew by this session */
                 capture = spawn(args, 0, capname);
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
@@ -783,7 +886,7 @@ int main(int argc, char** argv)
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
                 if (ms() - began >= 60000)
-                    attempts = 0;
+                    attempts = resets = 0;
             }
         }
 
@@ -833,6 +936,7 @@ done:
     end(&decoder);
     end(&frames);
     end(&knob);
+    audio_route_cleanup_impl(1);
     end(&lease);
     unlink("input.fifo");
     if (guard >= 0) {

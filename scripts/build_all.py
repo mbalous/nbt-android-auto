@@ -43,7 +43,8 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 # payload binaries built here (installer/payload/<name>)
 PROGRAMS = {"nbt_android_auto": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt", "audioconn": "rt",
-            "libNbtAndroidAuto.so": "plugin"}
+            "libNbtAndroidAuto.so": "plugin", "nbt_reset": "rt", "nbt_key": "test",
+            "nbt_a2i_beep": "test"}
 
 
 def git(*args, cwd=None):
@@ -200,6 +201,7 @@ def main():
     (out / "build.log").write_text(log, encoding="utf-8")
     print(log[log.find("== nbt_android_auto"):] if "== nbt_android_auto" in log else log[-3000:])
     if result.returncode != 0 or "BUILD_QNX_DONE" not in log:
+        remote("rm -rf " + folder)   # the log is kept locally; a full VM disk fails the next link (user 2026-11-12)
         raise SystemExit("VM build failed, full log: " + str(out / "build.log"))
 
     programs = out / "programs"
@@ -209,6 +211,9 @@ def main():
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if fetched.returncode != 0:
             print("not built:", name)
+    # every run made a new folder in the VM and nothing removed it: the VM disk filled up ("final link failed: Bad file
+    # descriptor", user 2026-11-12). The programs are fetched now, so the folder goes.
+    remote("rm -rf " + folder)
     resources = out / "plugin-resources"
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")

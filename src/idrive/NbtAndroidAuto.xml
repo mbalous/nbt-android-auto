@@ -13,10 +13,18 @@
       <hmiAction id="27" target="31"/>
       <!-- restart of the Android Auto service only (not the head unit) -> inert page 32, then back to 10 -->
       <hmiAction id="28" target="32"/>
+      <!-- "Restart system": page 33 asks, its button leads to the inert page 34, whose focus runs nbt_reset (ids 80-89:
+           every id in this file must be unique, see model 70) -->
+      <hmiAction id="80" target="33"/>
+      <hmiAction id="81" target="34"/>
+      <!-- "Start at boot" on/off (Android Auto to the front at the first session, see nbt_knob.cpp) -> inert page 35, whose
+           focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
+      <hmiAction id="90" target="35"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
       <textIdModel id="4" textId="2" preinst="false"/>
+      <!-- target of the menu entry: 10, or 20 (hold) while Android Auto runs, set by the plugin -->
       <raIntModel id="5" value="10"/>
       <textIdModel id="6" textId="11" preinst="false"/>
       <textIdModel id="7" textId="12" preinst="false"/>
@@ -26,25 +34,537 @@
       <textIdModel id="23" textId="18" preinst="false"/>
       <textIdModel id="24" textId="10" preinst="false"/>
       <textIdModel id="25" textId="19" preinst="false"/>
-      <textIdModel id="26" textId="20" preinst="false"/>
+      <!-- 70, not 26: id 26 is the 16:9 button's action; with a model of the same id the 16:9 button did nothing (car
+           2026-11-12: only "mode page widescreen" ever reached the plugin) -->
+      <textIdModel id="70" textId="20" preinst="false"/>
+      <textIdModel id="82" textId="21" preinst="false"/>
+      <textIdModel id="83" textId="22" preinst="false"/>
+      <textIdModel id="84" textId="23" preinst="false"/>
+      <textIdModel id="85" textId="24" preinst="false"/>
+      <textIdModel id="91" textId="31" preinst="false"/>
+      <textIdModel id="94" textId="33" preinst="false"/>
+      <textIdModel id="95" textId="34" preinst="false"/>
     </models>
     <events>
-      <focusEvent id="52" target="20"/>
+      <focusEvent id="52" target="13"/>
       <focusEvent id="53" target="10"/>
       <!-- second way into the hold states (car 2026-11-09: iDrive ignored 52 after the page had been left from level 18;
            the plugin alternates 52 / 54 while one is ignored) -->
       <focusEvent id="54" target="13"/>
+      <!-- 200..699: the pool the plugin uses (car 2026-11-18, HmiMain3D CFocusEvent::perform): iDrive performs each
+           focus event at most 11 times per HMI start ("[RHMI FocusEvent] FocusEvent counter > 10", the counter lives
+           in the event and is never reset; only apps with the permission rhmi.unlimitedfocusevents are exempt). The
+           plugin uses each event 10 times, then the next one. -->
+      <focusEvent id="200" target="13"/>
+      <focusEvent id="201" target="13"/>
+      <focusEvent id="202" target="13"/>
+      <focusEvent id="203" target="13"/>
+      <focusEvent id="204" target="13"/>
+      <focusEvent id="205" target="13"/>
+      <focusEvent id="206" target="13"/>
+      <focusEvent id="207" target="13"/>
+      <focusEvent id="208" target="13"/>
+      <focusEvent id="209" target="13"/>
+      <focusEvent id="210" target="13"/>
+      <focusEvent id="211" target="13"/>
+      <focusEvent id="212" target="13"/>
+      <focusEvent id="213" target="13"/>
+      <focusEvent id="214" target="13"/>
+      <focusEvent id="215" target="13"/>
+      <focusEvent id="216" target="13"/>
+      <focusEvent id="217" target="13"/>
+      <focusEvent id="218" target="13"/>
+      <focusEvent id="219" target="13"/>
+      <focusEvent id="220" target="13"/>
+      <focusEvent id="221" target="13"/>
+      <focusEvent id="222" target="13"/>
+      <focusEvent id="223" target="13"/>
+      <focusEvent id="224" target="13"/>
+      <focusEvent id="225" target="13"/>
+      <focusEvent id="226" target="13"/>
+      <focusEvent id="227" target="13"/>
+      <focusEvent id="228" target="13"/>
+      <focusEvent id="229" target="13"/>
+      <focusEvent id="230" target="13"/>
+      <focusEvent id="231" target="13"/>
+      <focusEvent id="232" target="13"/>
+      <focusEvent id="233" target="13"/>
+      <focusEvent id="234" target="13"/>
+      <focusEvent id="235" target="13"/>
+      <focusEvent id="236" target="13"/>
+      <focusEvent id="237" target="13"/>
+      <focusEvent id="238" target="13"/>
+      <focusEvent id="239" target="13"/>
+      <focusEvent id="240" target="13"/>
+      <focusEvent id="241" target="13"/>
+      <focusEvent id="242" target="13"/>
+      <focusEvent id="243" target="13"/>
+      <focusEvent id="244" target="13"/>
+      <focusEvent id="245" target="13"/>
+      <focusEvent id="246" target="13"/>
+      <focusEvent id="247" target="13"/>
+      <focusEvent id="248" target="13"/>
+      <focusEvent id="249" target="13"/>
+      <focusEvent id="250" target="13"/>
+      <focusEvent id="251" target="13"/>
+      <focusEvent id="252" target="13"/>
+      <focusEvent id="253" target="13"/>
+      <focusEvent id="254" target="13"/>
+      <focusEvent id="255" target="13"/>
+      <focusEvent id="256" target="13"/>
+      <focusEvent id="257" target="13"/>
+      <focusEvent id="258" target="13"/>
+      <focusEvent id="259" target="13"/>
+      <focusEvent id="260" target="13"/>
+      <focusEvent id="261" target="13"/>
+      <focusEvent id="262" target="13"/>
+      <focusEvent id="263" target="13"/>
+      <focusEvent id="264" target="13"/>
+      <focusEvent id="265" target="13"/>
+      <focusEvent id="266" target="13"/>
+      <focusEvent id="267" target="13"/>
+      <focusEvent id="268" target="13"/>
+      <focusEvent id="269" target="13"/>
+      <focusEvent id="270" target="13"/>
+      <focusEvent id="271" target="13"/>
+      <focusEvent id="272" target="13"/>
+      <focusEvent id="273" target="13"/>
+      <focusEvent id="274" target="13"/>
+      <focusEvent id="275" target="13"/>
+      <focusEvent id="276" target="13"/>
+      <focusEvent id="277" target="13"/>
+      <focusEvent id="278" target="13"/>
+      <focusEvent id="279" target="13"/>
+      <focusEvent id="280" target="13"/>
+      <focusEvent id="281" target="13"/>
+      <focusEvent id="282" target="13"/>
+      <focusEvent id="283" target="13"/>
+      <focusEvent id="284" target="13"/>
+      <focusEvent id="285" target="13"/>
+      <focusEvent id="286" target="13"/>
+      <focusEvent id="287" target="13"/>
+      <focusEvent id="288" target="13"/>
+      <focusEvent id="289" target="13"/>
+      <focusEvent id="290" target="13"/>
+      <focusEvent id="291" target="13"/>
+      <focusEvent id="292" target="13"/>
+      <focusEvent id="293" target="13"/>
+      <focusEvent id="294" target="13"/>
+      <focusEvent id="295" target="13"/>
+      <focusEvent id="296" target="13"/>
+      <focusEvent id="297" target="13"/>
+      <focusEvent id="298" target="13"/>
+      <focusEvent id="299" target="13"/>
+      <focusEvent id="300" target="13"/>
+      <focusEvent id="301" target="13"/>
+      <focusEvent id="302" target="13"/>
+      <focusEvent id="303" target="13"/>
+      <focusEvent id="304" target="13"/>
+      <focusEvent id="305" target="13"/>
+      <focusEvent id="306" target="13"/>
+      <focusEvent id="307" target="13"/>
+      <focusEvent id="308" target="13"/>
+      <focusEvent id="309" target="13"/>
+      <focusEvent id="310" target="13"/>
+      <focusEvent id="311" target="13"/>
+      <focusEvent id="312" target="13"/>
+      <focusEvent id="313" target="13"/>
+      <focusEvent id="314" target="13"/>
+      <focusEvent id="315" target="13"/>
+      <focusEvent id="316" target="13"/>
+      <focusEvent id="317" target="13"/>
+      <focusEvent id="318" target="13"/>
+      <focusEvent id="319" target="13"/>
+      <focusEvent id="320" target="13"/>
+      <focusEvent id="321" target="13"/>
+      <focusEvent id="322" target="13"/>
+      <focusEvent id="323" target="13"/>
+      <focusEvent id="324" target="13"/>
+      <focusEvent id="325" target="13"/>
+      <focusEvent id="326" target="13"/>
+      <focusEvent id="327" target="13"/>
+      <focusEvent id="328" target="13"/>
+      <focusEvent id="329" target="13"/>
+      <focusEvent id="330" target="13"/>
+      <focusEvent id="331" target="13"/>
+      <focusEvent id="332" target="13"/>
+      <focusEvent id="333" target="13"/>
+      <focusEvent id="334" target="13"/>
+      <focusEvent id="335" target="13"/>
+      <focusEvent id="336" target="13"/>
+      <focusEvent id="337" target="13"/>
+      <focusEvent id="338" target="13"/>
+      <focusEvent id="339" target="13"/>
+      <focusEvent id="340" target="13"/>
+      <focusEvent id="341" target="13"/>
+      <focusEvent id="342" target="13"/>
+      <focusEvent id="343" target="13"/>
+      <focusEvent id="344" target="13"/>
+      <focusEvent id="345" target="13"/>
+      <focusEvent id="346" target="13"/>
+      <focusEvent id="347" target="13"/>
+      <focusEvent id="348" target="13"/>
+      <focusEvent id="349" target="13"/>
+      <focusEvent id="350" target="13"/>
+      <focusEvent id="351" target="13"/>
+      <focusEvent id="352" target="13"/>
+      <focusEvent id="353" target="13"/>
+      <focusEvent id="354" target="13"/>
+      <focusEvent id="355" target="13"/>
+      <focusEvent id="356" target="13"/>
+      <focusEvent id="357" target="13"/>
+      <focusEvent id="358" target="13"/>
+      <focusEvent id="359" target="13"/>
+      <focusEvent id="360" target="13"/>
+      <focusEvent id="361" target="13"/>
+      <focusEvent id="362" target="13"/>
+      <focusEvent id="363" target="13"/>
+      <focusEvent id="364" target="13"/>
+      <focusEvent id="365" target="13"/>
+      <focusEvent id="366" target="13"/>
+      <focusEvent id="367" target="13"/>
+      <focusEvent id="368" target="13"/>
+      <focusEvent id="369" target="13"/>
+      <focusEvent id="370" target="13"/>
+      <focusEvent id="371" target="13"/>
+      <focusEvent id="372" target="13"/>
+      <focusEvent id="373" target="13"/>
+      <focusEvent id="374" target="13"/>
+      <focusEvent id="375" target="13"/>
+      <focusEvent id="376" target="13"/>
+      <focusEvent id="377" target="13"/>
+      <focusEvent id="378" target="13"/>
+      <focusEvent id="379" target="13"/>
+      <focusEvent id="380" target="13"/>
+      <focusEvent id="381" target="13"/>
+      <focusEvent id="382" target="13"/>
+      <focusEvent id="383" target="13"/>
+      <focusEvent id="384" target="13"/>
+      <focusEvent id="385" target="13"/>
+      <focusEvent id="386" target="13"/>
+      <focusEvent id="387" target="13"/>
+      <focusEvent id="388" target="13"/>
+      <focusEvent id="389" target="13"/>
+      <focusEvent id="390" target="13"/>
+      <focusEvent id="391" target="13"/>
+      <focusEvent id="392" target="13"/>
+      <focusEvent id="393" target="13"/>
+      <focusEvent id="394" target="13"/>
+      <focusEvent id="395" target="13"/>
+      <focusEvent id="396" target="13"/>
+      <focusEvent id="397" target="13"/>
+      <focusEvent id="398" target="13"/>
+      <focusEvent id="399" target="13"/>
+      <focusEvent id="400" target="13"/>
+      <focusEvent id="401" target="13"/>
+      <focusEvent id="402" target="13"/>
+      <focusEvent id="403" target="13"/>
+      <focusEvent id="404" target="13"/>
+      <focusEvent id="405" target="13"/>
+      <focusEvent id="406" target="13"/>
+      <focusEvent id="407" target="13"/>
+      <focusEvent id="408" target="13"/>
+      <focusEvent id="409" target="13"/>
+      <focusEvent id="410" target="13"/>
+      <focusEvent id="411" target="13"/>
+      <focusEvent id="412" target="13"/>
+      <focusEvent id="413" target="13"/>
+      <focusEvent id="414" target="13"/>
+      <focusEvent id="415" target="13"/>
+      <focusEvent id="416" target="13"/>
+      <focusEvent id="417" target="13"/>
+      <focusEvent id="418" target="13"/>
+      <focusEvent id="419" target="13"/>
+      <focusEvent id="420" target="13"/>
+      <focusEvent id="421" target="13"/>
+      <focusEvent id="422" target="13"/>
+      <focusEvent id="423" target="13"/>
+      <focusEvent id="424" target="13"/>
+      <focusEvent id="425" target="13"/>
+      <focusEvent id="426" target="13"/>
+      <focusEvent id="427" target="13"/>
+      <focusEvent id="428" target="13"/>
+      <focusEvent id="429" target="13"/>
+      <focusEvent id="430" target="13"/>
+      <focusEvent id="431" target="13"/>
+      <focusEvent id="432" target="13"/>
+      <focusEvent id="433" target="13"/>
+      <focusEvent id="434" target="13"/>
+      <focusEvent id="435" target="13"/>
+      <focusEvent id="436" target="13"/>
+      <focusEvent id="437" target="13"/>
+      <focusEvent id="438" target="13"/>
+      <focusEvent id="439" target="13"/>
+      <focusEvent id="440" target="13"/>
+      <focusEvent id="441" target="13"/>
+      <focusEvent id="442" target="13"/>
+      <focusEvent id="443" target="13"/>
+      <focusEvent id="444" target="13"/>
+      <focusEvent id="445" target="13"/>
+      <focusEvent id="446" target="13"/>
+      <focusEvent id="447" target="13"/>
+      <focusEvent id="448" target="13"/>
+      <focusEvent id="449" target="13"/>
+      <focusEvent id="450" target="13"/>
+      <focusEvent id="451" target="13"/>
+      <focusEvent id="452" target="13"/>
+      <focusEvent id="453" target="13"/>
+      <focusEvent id="454" target="13"/>
+      <focusEvent id="455" target="13"/>
+      <focusEvent id="456" target="13"/>
+      <focusEvent id="457" target="13"/>
+      <focusEvent id="458" target="13"/>
+      <focusEvent id="459" target="13"/>
+      <focusEvent id="460" target="13"/>
+      <focusEvent id="461" target="13"/>
+      <focusEvent id="462" target="13"/>
+      <focusEvent id="463" target="13"/>
+      <focusEvent id="464" target="13"/>
+      <focusEvent id="465" target="13"/>
+      <focusEvent id="466" target="13"/>
+      <focusEvent id="467" target="13"/>
+      <focusEvent id="468" target="13"/>
+      <focusEvent id="469" target="13"/>
+      <focusEvent id="470" target="13"/>
+      <focusEvent id="471" target="13"/>
+      <focusEvent id="472" target="13"/>
+      <focusEvent id="473" target="13"/>
+      <focusEvent id="474" target="13"/>
+      <focusEvent id="475" target="13"/>
+      <focusEvent id="476" target="13"/>
+      <focusEvent id="477" target="13"/>
+      <focusEvent id="478" target="13"/>
+      <focusEvent id="479" target="13"/>
+      <focusEvent id="480" target="13"/>
+      <focusEvent id="481" target="13"/>
+      <focusEvent id="482" target="13"/>
+      <focusEvent id="483" target="13"/>
+      <focusEvent id="484" target="13"/>
+      <focusEvent id="485" target="13"/>
+      <focusEvent id="486" target="13"/>
+      <focusEvent id="487" target="13"/>
+      <focusEvent id="488" target="13"/>
+      <focusEvent id="489" target="13"/>
+      <focusEvent id="490" target="13"/>
+      <focusEvent id="491" target="13"/>
+      <focusEvent id="492" target="13"/>
+      <focusEvent id="493" target="13"/>
+      <focusEvent id="494" target="13"/>
+      <focusEvent id="495" target="13"/>
+      <focusEvent id="496" target="13"/>
+      <focusEvent id="497" target="13"/>
+      <focusEvent id="498" target="13"/>
+      <focusEvent id="499" target="13"/>
+      <focusEvent id="500" target="13"/>
+      <focusEvent id="501" target="13"/>
+      <focusEvent id="502" target="13"/>
+      <focusEvent id="503" target="13"/>
+      <focusEvent id="504" target="13"/>
+      <focusEvent id="505" target="13"/>
+      <focusEvent id="506" target="13"/>
+      <focusEvent id="507" target="13"/>
+      <focusEvent id="508" target="13"/>
+      <focusEvent id="509" target="13"/>
+      <focusEvent id="510" target="13"/>
+      <focusEvent id="511" target="13"/>
+      <focusEvent id="512" target="13"/>
+      <focusEvent id="513" target="13"/>
+      <focusEvent id="514" target="13"/>
+      <focusEvent id="515" target="13"/>
+      <focusEvent id="516" target="13"/>
+      <focusEvent id="517" target="13"/>
+      <focusEvent id="518" target="13"/>
+      <focusEvent id="519" target="13"/>
+      <focusEvent id="520" target="13"/>
+      <focusEvent id="521" target="13"/>
+      <focusEvent id="522" target="13"/>
+      <focusEvent id="523" target="13"/>
+      <focusEvent id="524" target="13"/>
+      <focusEvent id="525" target="13"/>
+      <focusEvent id="526" target="13"/>
+      <focusEvent id="527" target="13"/>
+      <focusEvent id="528" target="13"/>
+      <focusEvent id="529" target="13"/>
+      <focusEvent id="530" target="13"/>
+      <focusEvent id="531" target="13"/>
+      <focusEvent id="532" target="13"/>
+      <focusEvent id="533" target="13"/>
+      <focusEvent id="534" target="13"/>
+      <focusEvent id="535" target="13"/>
+      <focusEvent id="536" target="13"/>
+      <focusEvent id="537" target="13"/>
+      <focusEvent id="538" target="13"/>
+      <focusEvent id="539" target="13"/>
+      <focusEvent id="540" target="13"/>
+      <focusEvent id="541" target="13"/>
+      <focusEvent id="542" target="13"/>
+      <focusEvent id="543" target="13"/>
+      <focusEvent id="544" target="13"/>
+      <focusEvent id="545" target="13"/>
+      <focusEvent id="546" target="13"/>
+      <focusEvent id="547" target="13"/>
+      <focusEvent id="548" target="13"/>
+      <focusEvent id="549" target="13"/>
+      <focusEvent id="550" target="13"/>
+      <focusEvent id="551" target="13"/>
+      <focusEvent id="552" target="13"/>
+      <focusEvent id="553" target="13"/>
+      <focusEvent id="554" target="13"/>
+      <focusEvent id="555" target="13"/>
+      <focusEvent id="556" target="13"/>
+      <focusEvent id="557" target="13"/>
+      <focusEvent id="558" target="13"/>
+      <focusEvent id="559" target="13"/>
+      <focusEvent id="560" target="13"/>
+      <focusEvent id="561" target="13"/>
+      <focusEvent id="562" target="13"/>
+      <focusEvent id="563" target="13"/>
+      <focusEvent id="564" target="13"/>
+      <focusEvent id="565" target="13"/>
+      <focusEvent id="566" target="13"/>
+      <focusEvent id="567" target="13"/>
+      <focusEvent id="568" target="13"/>
+      <focusEvent id="569" target="13"/>
+      <focusEvent id="570" target="13"/>
+      <focusEvent id="571" target="13"/>
+      <focusEvent id="572" target="13"/>
+      <focusEvent id="573" target="13"/>
+      <focusEvent id="574" target="13"/>
+      <focusEvent id="575" target="13"/>
+      <focusEvent id="576" target="13"/>
+      <focusEvent id="577" target="13"/>
+      <focusEvent id="578" target="13"/>
+      <focusEvent id="579" target="13"/>
+      <focusEvent id="580" target="13"/>
+      <focusEvent id="581" target="13"/>
+      <focusEvent id="582" target="13"/>
+      <focusEvent id="583" target="13"/>
+      <focusEvent id="584" target="13"/>
+      <focusEvent id="585" target="13"/>
+      <focusEvent id="586" target="13"/>
+      <focusEvent id="587" target="13"/>
+      <focusEvent id="588" target="13"/>
+      <focusEvent id="589" target="13"/>
+      <focusEvent id="590" target="13"/>
+      <focusEvent id="591" target="13"/>
+      <focusEvent id="592" target="13"/>
+      <focusEvent id="593" target="13"/>
+      <focusEvent id="594" target="13"/>
+      <focusEvent id="595" target="13"/>
+      <focusEvent id="596" target="13"/>
+      <focusEvent id="597" target="13"/>
+      <focusEvent id="598" target="13"/>
+      <focusEvent id="599" target="13"/>
+      <focusEvent id="600" target="13"/>
+      <focusEvent id="601" target="13"/>
+      <focusEvent id="602" target="13"/>
+      <focusEvent id="603" target="13"/>
+      <focusEvent id="604" target="13"/>
+      <focusEvent id="605" target="13"/>
+      <focusEvent id="606" target="13"/>
+      <focusEvent id="607" target="13"/>
+      <focusEvent id="608" target="13"/>
+      <focusEvent id="609" target="13"/>
+      <focusEvent id="610" target="13"/>
+      <focusEvent id="611" target="13"/>
+      <focusEvent id="612" target="13"/>
+      <focusEvent id="613" target="13"/>
+      <focusEvent id="614" target="13"/>
+      <focusEvent id="615" target="13"/>
+      <focusEvent id="616" target="13"/>
+      <focusEvent id="617" target="13"/>
+      <focusEvent id="618" target="13"/>
+      <focusEvent id="619" target="13"/>
+      <focusEvent id="620" target="13"/>
+      <focusEvent id="621" target="13"/>
+      <focusEvent id="622" target="13"/>
+      <focusEvent id="623" target="13"/>
+      <focusEvent id="624" target="13"/>
+      <focusEvent id="625" target="13"/>
+      <focusEvent id="626" target="13"/>
+      <focusEvent id="627" target="13"/>
+      <focusEvent id="628" target="13"/>
+      <focusEvent id="629" target="13"/>
+      <focusEvent id="630" target="13"/>
+      <focusEvent id="631" target="13"/>
+      <focusEvent id="632" target="13"/>
+      <focusEvent id="633" target="13"/>
+      <focusEvent id="634" target="13"/>
+      <focusEvent id="635" target="13"/>
+      <focusEvent id="636" target="13"/>
+      <focusEvent id="637" target="13"/>
+      <focusEvent id="638" target="13"/>
+      <focusEvent id="639" target="13"/>
+      <focusEvent id="640" target="13"/>
+      <focusEvent id="641" target="13"/>
+      <focusEvent id="642" target="13"/>
+      <focusEvent id="643" target="13"/>
+      <focusEvent id="644" target="13"/>
+      <focusEvent id="645" target="13"/>
+      <focusEvent id="646" target="13"/>
+      <focusEvent id="647" target="13"/>
+      <focusEvent id="648" target="13"/>
+      <focusEvent id="649" target="13"/>
+      <focusEvent id="650" target="13"/>
+      <focusEvent id="651" target="13"/>
+      <focusEvent id="652" target="13"/>
+      <focusEvent id="653" target="13"/>
+      <focusEvent id="654" target="13"/>
+      <focusEvent id="655" target="13"/>
+      <focusEvent id="656" target="13"/>
+      <focusEvent id="657" target="13"/>
+      <focusEvent id="658" target="13"/>
+      <focusEvent id="659" target="13"/>
+      <focusEvent id="660" target="13"/>
+      <focusEvent id="661" target="13"/>
+      <focusEvent id="662" target="13"/>
+      <focusEvent id="663" target="13"/>
+      <focusEvent id="664" target="13"/>
+      <focusEvent id="665" target="13"/>
+      <focusEvent id="666" target="13"/>
+      <focusEvent id="667" target="13"/>
+      <focusEvent id="668" target="13"/>
+      <focusEvent id="669" target="13"/>
+      <focusEvent id="670" target="13"/>
+      <focusEvent id="671" target="13"/>
+      <focusEvent id="672" target="13"/>
+      <focusEvent id="673" target="13"/>
+      <focusEvent id="674" target="13"/>
+      <focusEvent id="675" target="13"/>
+      <focusEvent id="676" target="13"/>
+      <focusEvent id="677" target="13"/>
+      <focusEvent id="678" target="13"/>
+      <focusEvent id="679" target="13"/>
+      <focusEvent id="680" target="13"/>
+      <focusEvent id="681" target="13"/>
+      <focusEvent id="682" target="13"/>
+      <focusEvent id="683" target="13"/>
+      <focusEvent id="684" target="13"/>
+      <focusEvent id="685" target="13"/>
+      <focusEvent id="686" target="13"/>
+      <focusEvent id="687" target="13"/>
+      <focusEvent id="688" target="13"/>
+      <focusEvent id="689" target="13"/>
+      <focusEvent id="690" target="13"/>
+      <focusEvent id="691" target="13"/>
+      <focusEvent id="692" target="13"/>
+      <focusEvent id="693" target="13"/>
+      <focusEvent id="694" target="13"/>
+      <focusEvent id="695" target="13"/>
+      <focusEvent id="696" target="13"/>
+      <focusEvent id="697" target="13"/>
+      <focusEvent id="698" target="13"/>
+      <focusEvent id="699" target="13"/>
     </events>
     <hmiStates>
       <hmiState id="10" textModel="3" text="Android Auto">
         <components>
           <label id="11" model="4" text="Telefon per USB verbinden"><properties><property id="2" value="false"/></properties></label>
-          <button id="61" action="26" model="6" text="16:9"/>
-          <button id="62" action="27" model="7" text="Breitbild"/>
+          <button id="61" action="26" model="6" text="Split screen"/>
+          <button id="62" action="27" model="7" text="Full width"/>
+          <button id="92" action="90" model="91" text="Start at boot: on"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
-          <label id="63" model="8" text="Tipp"><properties><property id="2" value="false"/></properties></label>
-          <label id="64" model="9" text="Breitbild"><properties><property id="2" value="false"/></properties></label>
-          <label id="65" model="22" text="Wechsel"><properties><property id="2" value="false"/></properties></label>
+          <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
       </hmiState>
       <!-- picture mode pages: nothing selectable, the plugin returns to page 10 at once -->
@@ -58,52 +578,35 @@
           <label id="67" model="23" text="Bildmodus gespeichert"/>
         </components>
       </hmiState>
-      <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
+      <hmiState id="35" parentId="10" textModel="95" text="Start at boot">
         <components>
-          <label id="69" model="26" text="Android Auto startet neu"/>
+          <label id="93" model="94" text="Setting saved"/>
         </components>
       </hmiState>
-      <!-- hold states 13..20, each nested in the previous one: nothing selectable, so controller turns / pushes / tilts do
-           nothing in iDrive. BACK (or tilt left) only climbs one level, so no focus event is needed for it; focusEvent 52
-           goes to the deepest level (car 2026-11-07: too many events made the HMI ignore them until a reboot). -->
+      <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
+        <components>
+          <label id="69" model="70" text="Android Auto startet neu"/>
+        </components>
+      </hmiState>
+      <hmiState id="33" parentId="10" textModel="82" text="System neu starten">
+        <components>
+          <label id="87" model="83" text="Head Unit jetzt neu starten?"><properties><property id="2" value="false"/></properties></label>
+          <button id="88" action="81" model="84" text="Jetzt neu starten"/>
+        </components>
+      </hmiState>
+      <!-- nothing selectable: reaching it starts the restart; model 85 shows the result -->
+      <hmiState id="34" parentId="33" textModel="82" text="System neu starten">
+        <components>
+          <label id="89" model="85" text="Startet neu ..."/>
+        </components>
+      </hmiState>
+      <!-- hold state 13: nothing selectable, so controller turns / pushes / tilts do nothing in iDrive. It was 8 nested
+           states (13..20) for BACK / tilt left; since 2026-11-17 nbt_knob's guards keep iDrive's focus there (tilt right
+           on BACK / tilt left, then BACK), so one is enough (user decision 2026-11-17, revert this commit if it breaks).
+           focusEvent 52 and 54 both lead here (car 2026-11-07: too many events made the HMI ignore them). -->
       <hmiState id="13" parentId="10" textModel="3" text="Android Auto">
         <components>
           <label id="41" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="14" parentId="13" textModel="3" text="Android Auto">
-        <components>
-          <label id="42" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="15" parentId="14" textModel="3" text="Android Auto">
-        <components>
-          <label id="43" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="16" parentId="15" textModel="3" text="Android Auto">
-        <components>
-          <label id="44" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="17" parentId="16" textModel="3" text="Android Auto">
-        <components>
-          <label id="45" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="18" parentId="17" textModel="3" text="Android Auto">
-        <components>
-          <label id="46" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="19" parentId="18" textModel="3" text="Android Auto">
-        <components>
-          <label id="47" model="4" text="Telefon per USB verbinden"/>
-        </components>
-      </hmiState>
-      <hmiState id="20" parentId="19" textModel="3" text="Android Auto">
-        <components>
-          <label id="48" model="4" text="Telefon per USB verbinden"/>
         </components>
       </hmiState>
     </hmiStates>

@@ -44,6 +44,9 @@ def main():
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
              ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
             ("src/android_auto/tests/test_fifo_http.cpp", [], ["-pthread"]),
+            ("src/android_auto/knob/tests/test_prompt_route.cpp", [str(work)],
+             ["-pthread", "-ffunction-sections", "-Wl,--gc-sections",
+              "-I", str(ROOT / "src/android_auto/knob/ref")]),
         ]
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem

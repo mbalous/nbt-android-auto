@@ -145,7 +145,8 @@ static int endedAdd(int value) {
     files["test_tls_memory.cpp"] = (ROOT / "src/android_auto/test_tls_memory.cpp").read_bytes()
     files["test_session_protocol.cpp"] = (ROOT / "src/android_auto/test_session_protocol.cpp").read_bytes()
     for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'nbt_android_auto.c',
-                 'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp', 'test_video_capture.cpp']:
+                 'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp',
+                 'aa_media_out.hpp', 'aa_media_out.cpp', 'test_video_capture.cpp']:
         files[name] = (ROOT / 'src/android_auto' / name).read_bytes()
     cxx = "qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-3.6.7/include -Ireference/src -Ireference/include"
     libs = "lib/libmbedtls.a lib/libmbedx509.a lib/libmbedcrypto.a -lsocket -lm"
@@ -170,7 +171,7 @@ static int endedAdd(int value) {
                  "./test_protocol",
                  cxx + " test_tls_usb_probe.cpp tls_usb_probe.cpp reference/src/aa_cryptor.cpp " + libs + " -o test_tls_usb_probe",
                  "./test_tls_usb_probe",
-                 cxx + " test_video_capture.cpp aa_video_capture.cpp aa_audio.cpp libnbt_aa_core.a " + libs + " -o test_video_capture",
+                 cxx + " test_video_capture.cpp aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp libnbt_aa_core.a " + libs + " -o test_video_capture",
                  "./test_video_capture",
                  "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -c nbt_android_auto.c -o nbt_android_auto.o",
                  cxx + " tls_usb_probe.cpp reference/src/aa_cryptor.cpp nbt_android_auto.o " + libs + " -lusbdi -o nbt_aa_tls_probe",
@@ -178,7 +179,7 @@ static int endedAdd(int value) {
                  "if ./nbt_aa_tls_probe --tls-handshake 0 2; then exit 1; else test $? -eq 3; fi",
                  "if ./nbt_aa_tls_probe --discover 0 2; then exit 1; else test $? -eq 3; fi",
                  "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c nbt_android_auto.c -o nbt_aa_capture_probe.o",
-                 cxx + " aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp nbt_aa_capture_probe.o libnbt_aa_core.a " + libs + " -lusbdi -o nbt_aa_capture_probe",
+                 cxx + " aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp nbt_aa_capture_probe.o libnbt_aa_core.a " + libs + " -lusbdi -o nbt_aa_capture_probe",
                  "./nbt_aa_capture_probe --selftest",
                  "if ./nbt_aa_capture_probe --capture-video 0 2; then exit 1; else test $? -eq 3; fi",
                  "echo AA_SESSION_VM_TEST_OK"]

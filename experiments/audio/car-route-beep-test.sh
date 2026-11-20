@@ -2,7 +2,7 @@
 # Parked test (2026-11-15): does the HU_NBT's ConnectionMaster grant browser connection 0xb8, and which A2I input is
 # then audible? Run by hand over SSH, car parked, volume moderate:
 #   sh /var/opt/hmi/data/rw/NbtAndroidAutoRT/car-route-beep-test.sh
-# Needs nbt_a2i_beep (build experiments/audio/nbt_a2i_beep.c for QNX) and audioconn (nbt_audioconn, part of the
+# Needs nbt_a2i_beep (build src/android_auto/audio/nbt_a2i_beep.c for QNX) and audioconn (nbt_audioconn, part of the
 # package) in the same folder.
 # Steps: connection table -> build 0xb8 -> beeps into input_stereo_1..5 (N beeps = input N) -> remove 0xb8 -> table.
 # Output: /var/opt/hmi/data/rw/NbtAndroidAutoRT/logs/route-beep-test.txt (also shown on screen).
