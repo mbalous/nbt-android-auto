@@ -65,4 +65,4 @@ The protocol itself (version exchange, TLS, service discovery, channels) is **NB
 - `android_auto/usb_inventory.c`, `connection_inventory.cpp`, `tls_capabilities.cpp`: read-only diagnostics used while
   exploring the head unit.
 - `idrive/check_plugin.cpp`: loads a plugin library in the VM to check its symbols, without starting it.
-- `hello_nbt.cpp`: toolchain smoke test (`build.cmd`).
+- `hello_nbt.cpp`: toolchain smoke test (`python3 scripts/qnx_vm_setup.py smoke-build`).

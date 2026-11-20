@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for wanting to help! This project started as one person's experiment on one car. It gets better with every
-car, phone and pair of hands. Issues and pull requests are welcome in **English or German**.
+car, phone and pair of hands. Issues and pull requests are welcome in **English**.
 
 Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me** (also PayPal for donations).
 
@@ -23,8 +23,7 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).
 4. **Latency**: the Cinemo HTTP buffer adds controller delay. Hardware decoding (`-wd 1`) was tried and made it worse
    (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.cpp`.
-5. **Signed release builds** (Windows code signing, macOS notarization).
-6. **Lane guidance** in the cluster has not been seen with a real phone yet.
+5. **Lane guidance** in the cluster has not been seen with a real phone yet.
 
 ## Before you start
 
@@ -42,8 +41,8 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 - Keep each pull request focused on one change and describe **how you tested it** (VM, car model, phone).
 - Say clearly what was verified on a real car and what was not. "Builds in the VM, not tested on a car" is fine.
 - Code style: follow the surrounding code. C/C++ for QNX 6.5 (gcc 4.4, `-std=gnu++0x`, no exceptions/RTTI in the
-  plugin), Python 3 for tools, PowerShell 5.1 compatible scripts. Shell scripts for the car use plain `sh` with LF line
-  endings.
+  plugin), Python 3 for Linux/WSL host tools. Shell scripts for Linux/WSL and the car use plain `sh` (or `bash` where
+  noted) with LF line endings.
 - By contributing you agree that your contribution is licensed under the project's
   [PolyForm Noncommercial License 1.0.0](LICENSE).
 

@@ -13,7 +13,7 @@ comes from open sources or was written for this project:
 
 ## Setup (once, about 15–30 minutes)
 
-Needs Docker and `sha256sum` for archive verification. On Apple Silicon it runs as amd64 under emulation.
+Needs Docker on Linux or WSL and `sha256sum` for archive verification.
 
 ```sh
 toolchain/setup.sh
@@ -37,7 +37,9 @@ taken from an existing payload with `--reuse`:
 - `accessory_window`: needs the QNX resource-manager headers, which this sysroot does not have.
 
 [`../flash-aa-open.sh`](../flash-aa-open.sh) builds only by default; `--install` or `--install-only` explicitly
-requests installation. Link-only stubs and hand-written headers do not establish ABI compatibility or vehicle safety.
+requests an **unsupported experimental** installation. Supported vehicle deployments must use binaries built in the
+QNX 6.5.0 VM (`scripts/build_all.py`). Link-only stubs and hand-written headers do not establish ABI compatibility or
+vehicle safety.
 
 See [COMPARISON.md](COMPARISON.md) for a same-source open-versus-SDP build comparison and the remaining validation
 needed before considering the open toolchain for releases.

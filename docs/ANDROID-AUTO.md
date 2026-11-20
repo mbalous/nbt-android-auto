@@ -685,12 +685,12 @@ parse path before copying it; no upstream crypto source was modified to
 suppress the warning. This port has not undergone a full compiler/security
 qualification or target performance test.
 
-Reproduction from the project directory (use the real Python executable):
+Reproduction from the project directory on Linux or WSL:
 
-```powershell
-& $python scripts/Test-AndroidAutoCore.py
-& $python scripts/Test-QnxTls.py
-& $python scripts/Test-AndroidAutoSession.py --core-build build/<core-run> --tls-build build/<tls-run>
+```sh
+python3 scripts/Test-AndroidAutoCore.py
+python3 scripts/Test-QnxTls.py
+python3 scripts/Test-AndroidAutoSession.py --core-build build/<core-run> --tls-build build/<tls-run>
 ```
 
 The latter command uses the two successful result directories from the first
@@ -782,11 +782,10 @@ driver. Local sh -n syntax validation and target execution passed. Save its outp
 
 Using the existing local SSH queue helper with a ready session:
 
-```powershell
-& $python C:\NBT-Project\.local\nbt_request.py 'sh -s' --input-file C:\NBT-Project\scripts\Inspect-NbtAndroidAuto.sh --output-file C:\NBT-Project\.local\aa-inventory.txt
+```sh
+python3 tools/nbt_request.py 'sh -s' --input-file scripts/Inspect-NbtAndroidAuto.sh --output-file .local/aa-inventory.txt
 ```
 
-Here $python is the actual Python executable, not the Windows Store alias.
 The script must retain LF newlines. Missing candidates mean only that these
 specific paths were not found; follow up with targeted searches if needed.
 

@@ -3,7 +3,7 @@
 This is a low-rate development bridge, not standalone Android Auto projection.
 Use --local-replay with --dry-run to validate incremental decoding without SSH.
 """
-import argparse,binascii,json,os,struct,subprocess,sys,threading,time,uuid
+import argparse,binascii,json,os,shutil,struct,subprocess,sys,threading,time,uuid
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
@@ -26,7 +26,7 @@ if not a.dry_run:
  status=dict(x.split('=',1) for x in (out/'before.txt').read_text().splitlines() if '=' in x)
  if status['state'] not in ('focused','polling','updated','rejected'):p.error('Receiver is not active: '+status['state'])
  instance=int(status['instance']);sequence=int(status['sequence'])
-ffmpeg=ROOT/'.local/video-tools/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe'
+ffmpeg=shutil.which('ffmpeg') or 'ffmpeg'
 log=(out/'ffmpeg.log').open('wb')
 proc=subprocess.Popen([str(ffmpeg),'-nostdin','-v','error','-probesize','32','-analyzeduration','0','-flags','low_delay','-f','h264','-i','pipe:0','-an','-vf','fps=3,scale=480:288','-c:v','png','-f','image2pipe','-flush_packets','1','pipe:1'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log)
 latest=[0,None];guard=threading.Lock();events=[];start=time.monotonic();eof_time=None

@@ -9,7 +9,7 @@ Keep the SDP VM build as the reference for releases while the open build's gaps 
 
 ## Evidence from 2026-11-20
 
-- The SDP build used `scripts/build_all.py --windows-openssh` against the non-root QNX 6.5 VM, with the two real HMI
+- The SDP build used `scripts/build_all.py` against the non-root QNX 6.5 VM, with the two real HMI
   libraries present. It built and fetched all 13 programs in `build_all.py`'s `PROGRAMS`, including the plugin.
 - The [open CI build](https://github.com/mbalous/nbt-android-auto/actions/runs/44807802193/job/136536261717) ran
   `python3 scripts/build_open.py` without `--reuse`; it reported `BUILD_OPEN_DONE` and built 10 programs.

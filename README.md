@@ -107,19 +107,17 @@ Prebuilt installers may be published on [Releases](../../releases); check that t
 you want. Older upstream or fork releases do not contain this merged version. To build a payload from this branch, see
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); no prebuilt release of the merged version is currently available.
 
-1. Use a matching release installer if available, or build a payload and run the Python installer:
-   `pip install "paramiko>=3.4,<4"`, then `python installer/nbt_aa_installer.py` with the `payload/` folder next to it.
-2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update**.
+1. Build a payload from the QNX VM (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)) or unpack a matching Python
+   payload archive, then run the Python installer on Linux or WSL:
+   `pip3 install "paramiko>=3.4,<4"`, then `python3 installer/nbt_aa_installer.py` (GUI) or
+   `python3 installer/nbt_aa_installer.py --cli install` (CLI) with `installer/payload/` present.
+2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update** (or confirm in CLI).
 3. Restart the iDrive.
 4. Plug in the phone and choose **Multimedia → Android Auto**.
 
 The installer writes only two folders (`/var/opt/hmi/data/rw/NbtAndroidAutoRT/` and
 `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/`), verifies every file byte by byte and can uninstall them again. It
 never stores your password. Details: [installer/README.md](installer/README.md).
-
-**Unsigned binaries:** the Windows .exe is not code-signed yet, so Windows 11 *Smart App Control* may block it. Use the
-Python version in that case; please do not switch off Smart App Control for this. The macOS app is not notarized: open
-it with right-click → Open.
 
 ## Configuration and diagnostics
 
@@ -171,7 +169,7 @@ are kept in [docs/history/](docs/history/) for reference.
 | `src/android_auto/` | Android Auto side: USB/AOA, TLS, video capture, service, decoder runner, test programs |
 | `src/android_auto/knob/` | iDrive controller (`nbt_knob`), hardware video switch (`nbt_hwvideo`), cluster guidance (`nbt_cluster`) |
 | `src/idrive/` | HMI plugin (menu entry and Android Auto page) and its resources |
-| `installer/` | Installer app (Python/Tk, Windows/macOS/Linux) and payload builder |
+| `installer/` | Installer app (Python/Tk GUI and CLI for Linux/WSL) and payload builder |
 | `scripts/` | Build, test and diagnostic scripts (VM and car) |
 | `tools/` | SSH session helper for development on the car |
 | `patches/` | Small patches to the upstream NBT-AAD core |
@@ -184,10 +182,12 @@ files and shows how they work together.
 
 ## Contributing
 
-Help is welcome, especially with testing on different phones, NBT software levels and cars. The QNX VM build uses
-`scripts/build_all.py` and requires the inputs described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-An [open toolchain](toolchain/README.md) is also available but is experimental and reuses an existing
-`accessory_window` binary. `./flash-aa-open.sh` builds only by default; installation requires `--install` or
+Help is welcome, especially with testing on different phones, NBT software levels and cars. Supported vehicle
+binaries are built in the QNX 6.5.0 VM with `python3 scripts/build_all.py` (see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)). An experimental [open toolchain](toolchain/README.md) is also available
+for Linux/WSL CI and local prototyping, but it reuses an existing `accessory_window` binary and is not the supported
+vehicle deployment path. `./flash-aa-open.sh` builds only by default; `--install` / `--install-only` is an explicit,
+unsupported experimental override.
 `--install-only`. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support and contact

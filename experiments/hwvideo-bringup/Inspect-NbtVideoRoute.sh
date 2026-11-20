@@ -5,7 +5,7 @@
 # Does NOT open a display, start playback, create windows, signal a process or write any file.
 # The car has NO head, printf or env (PATH=/usr/bin:/bin:/usr/sbin:/sbin): only echo, sed, grep, tail,
 # ls, cat, pidin, use, sloginfo are used. head N is replaced by sed Nq.
-# Every section is bounded so it finishes well inside the 40 s used by Collect-NbtVideoRoute.ps1.
+# Every section is bounded so it finishes well inside the 40 s used by collect_nbt_video_route.py.
 LD_LIBRARY_PATH=/lib:/usr/lib:/opt/sys/lib:/opt/mm/lib:/opt/mm/lib/cinemo
 export LD_LIBRARY_PATH
 

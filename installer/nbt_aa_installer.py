@@ -13,14 +13,13 @@ running HMI never sees a half-written file. Uninstall removes exactly these two 
 
 GUI:  python3 nbt_aa_installer.py
 CLI:  python3 nbt_aa_installer.py --cli install|uninstall|logs [--host 169.254.199.99]
-Needs: Python 3.8+ with tkinter (GUI) and paramiko (pip install paramiko). The release builds bundle both.
+Needs: Python 3.8+ with tkinter (GUI) and paramiko (pip install "paramiko>=3.4,<4").
 """
 import argparse
 import getpass
 import hashlib
 import io
 import json
-import locale
 import os
 import queue
 import socket
@@ -48,49 +47,26 @@ def payload_dir():
 
 # --------------------------------------------------------------------------------------------------------------------
 # texts
-def _is_german():
-    names = [os.environ.get(k, '') for k in ('LC_ALL', 'LC_MESSAGES', 'LANG')]
-    try:
-        names.append(locale.getlocale()[0] or '')
-    except ValueError:
-        pass
-    if sys.platform == 'win32':
-        try:
-            import ctypes
-            if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3ff == 0x07:
-                return True
-        except Exception:
-            pass
-    return any(n.lower().startswith(('de', 'german')) for n in names)
-
-
-GERMAN = _is_german()
 T = {
-    'host': ('IP-Adresse des NBT', 'NBT IP address'),
-    'port': ('Port', 'Port'),
-    'user': ('Benutzer', 'User'),
-    'password': ('Passwort', 'Password'),
-    'install': ('Installieren / Aktualisieren', 'Install / Update'),
-    'uninstall': ('Deinstallieren', 'Uninstall'),
-    'logs': ('Diagnose-Logs speichern', 'Save diagnostic logs'),
-    'intro': ('Laptop per Ethernet (ENET) mit dem Auto verbinden, Zuendung an, IP und root-Passwort eingeben.',
-              'Connect the laptop to the car via Ethernet (ENET), ignition on, enter IP and root password.'),
-    'confirm_uninstall': ('Android Auto wirklich vom NBT entfernen?', 'Really remove Android Auto from the NBT?'),
-    'done_install': ('Fertig. Jetzt das iDrive neu starten (Ein/Aus-Knopf ca. 30 s halten). Danach: Multimedia -> '
-                     'Android Auto.',
-                     'Done. Now restart iDrive (hold the power button for about 30 s). Then: Multimedia -> Android '
-                     'Auto.'),
-    'done_uninstall': ('Entfernt. Nach dem naechsten iDrive-Neustart ist der Menuepunkt weg.',
-                       'Removed. The menu entry is gone after the next iDrive restart.'),
-    'busy': ('Bitte warten ...', 'Please wait ...'),
-    'no_paramiko': ('Das Python-Paket "paramiko" fehlt: pip install paramiko',
-                    'The Python package "paramiko" is missing: pip install paramiko'),
-    'error': ('Fehler', 'Error'),
+    'host': 'NBT IP address',
+    'port': 'Port',
+    'user': 'User',
+    'password': 'Password',
+    'install': 'Install / Update',
+    'uninstall': 'Uninstall',
+    'logs': 'Save diagnostic logs',
+    'intro': 'Connect the laptop to the car via Ethernet (ENET), ignition on, enter IP and root password.',
+    'confirm_uninstall': 'Really remove Android Auto from the NBT?',
+    'done_install': 'Done. Now restart iDrive (hold the power button for about 30 s). Then: Multimedia -> Android Auto.',
+    'done_uninstall': 'Removed. The menu entry is gone after the next iDrive restart.',
+    'busy': 'Please wait ...',
+    'no_paramiko': 'The Python package "paramiko" is missing: pip install paramiko',
+    'error': 'Error',
 }
 
 
 def tr(key):
-    return T[key][0 if GERMAN else 1]
+    return T[key]
 
 
 class InstallError(Exception):
@@ -119,8 +95,7 @@ class Nbt:
                                 auth_timeout=60)
         except paramiko.AuthenticationException:
             self.client.close()
-            raise InstallError('Login failed: wrong user or password.' if not GERMAN else
-                               'Anmeldung fehlgeschlagen: Benutzer oder Passwort falsch.')
+            raise InstallError('Login failed: wrong user or password.')
         except paramiko.BadHostKeyException as exc:
             self.client.close()
             raise InstallError('SSH host key mismatch for %s.' % host) from exc
@@ -132,9 +107,7 @@ class Nbt:
             raise InstallError('SSH error: %s' % exc)
         except (socket.timeout, OSError) as exc:
             self.client.close()
-            raise InstallError(('No connection to %s:%d (%s). Cable, IP address and ignition?' if not GERMAN else
-                                'Keine Verbindung zu %s:%d (%s). Kabel, IP-Adresse und Zuendung pruefen.')
-                               % (host, port, exc))
+            raise InstallError('No connection to %s:%d (%s). Cable, IP address and ignition?' % (host, port, exc))
         key = self.client.get_transport().get_remote_server_key()
         self.log('SSH %s@%s:%d  host key %s %s' % (user, host, port, key.get_name(),
                                                    hashlib.sha256(key.asbytes()).hexdigest()[:32]))

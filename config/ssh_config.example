@@ -1,5 +1,5 @@
 # Copy to .local/ssh_config and replace the User and IdentityFile values.
-# Private keys belong outside the repository, e.g. in the Windows .ssh folder.
+# Private keys belong outside the repository, e.g. in ~/.ssh/.
 Host qnx-build
     HostName 192.168.56.10
     User REPLACE_ME
