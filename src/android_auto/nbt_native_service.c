@@ -506,37 +506,44 @@ static int find_phone(int* bus, int* device)
 {
     FILE* f = popen("LD_LIBRARY_PATH=/lib:/usr/lib:/opt/sys/lib usb", "r");
     char line[256];
-    int b = -1, result = 0, matches = 0, n = 0, i, j;
-    UsbDev dev[16];
-    unsigned cls[16];
-    int have_cls[16];
+    int b = -1, result = 0, matches = 0, n = 0, cur = -1, overflow = 0, i, j;
+    UsbDev dev[64];
+    unsigned cls[64];
+    int have_cls[64];
     if (!f)
         return 0;
     while (fgets(line, sizeof(line), f)) {
         int d;
         unsigned x;
-        if (sscanf(line, "USB %d", &b) == 1)
+        if (sscanf(line, "USB %d", &b) == 1) {
+            cur = -1;
             continue;
+        }
         if (sscanf(line, "Device Address : %d", &d) == 1) {
-            if (n < 16 && b >= 0 && d > 0) {
-                dev[n].bus = b;
-                dev[n].addr = d;
-                dev[n].v = dev[n].p = 0;
-                cls[n] = 0;
-                have_cls[n] = 0;
-                ++n;
+            cur = -1;
+            if (b >= 0 && d > 0) {
+                if (n < (int)(sizeof(dev) / sizeof(dev[0]))) {
+                    cur = n++;
+                    dev[cur].bus = b;
+                    dev[cur].addr = d;
+                    dev[cur].v = dev[cur].p = 0;
+                    cls[cur] = 0;
+                    have_cls[cur] = 0;
+                } else {
+                    overflow = 1;
+                }
             }
             continue;
         }
-        if (!n)
+        if (cur < 0)
             continue;
         if (sscanf(line, "Vendor : 0x%x", &x) == 1)
-            dev[n - 1].v = x;
+            dev[cur].v = x;
         else if (sscanf(line, "Product : 0x%x", &x) == 1)
-            dev[n - 1].p = x;
-        else if (!have_cls[n - 1] && sscanf(line, "Class : 0x%x", &x) == 1) {
-            cls[n - 1] = x; /* the first Class line is the device class */
-            have_cls[n - 1] = 1;
+            dev[cur].p = x;
+        else if (!have_cls[cur] && sscanf(line, "Class : 0x%x", &x) == 1) {
+            cls[cur] = x; /* the first Class line is the device class */
+            have_cls[cur] = 1;
         }
     }
     pclose(f);
@@ -581,6 +588,8 @@ static int find_phone(int* bus, int* device)
         } else
             found_aoa = u->p;
     }
+    if (overflow)
+        return 0;
     return matches == 1 ? result : 0;
 }
 
