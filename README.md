@@ -6,11 +6,16 @@ Wired Android Auto for the **original BMW NBT head unit** (CIC successor, 2013â€
 additional Android Auto interface. The phone's picture uses the NBT's video path, the iDrive controller handles input,
 and compatible instrument clusters can display navigation guidance.
 
-This fork brings together [JayJay3071's original project](https://github.com/JayJay3071/nbt-android-auto),
-[Valinet's fork](https://github.com/valinet/nbt-android-auto) and
-[Adityadroid's fork](https://github.com/adityadroid/nbt-android-auto), preserving their commit histories. It combines
-the `f6` audio and iDrive work with recovery, diagnostics, volume and experimental build tooling, while keeping
-security-sensitive compatibility options and additional persistent logging opt-in.
+This fork brings together these projects, preserving their commit histories:
+
+| Project | Repository |
+|---|---|
+| Original | [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) |
+| Fork | [valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto) |
+| Fork | [adityadroid/nbt-android-auto](https://github.com/adityadroid/nbt-android-auto) |
+
+It combines the `f6` audio and iDrive work with recovery, diagnostics, volume and experimental build tooling, while
+keeping security-sensitive compatibility options and additional persistent logging opt-in.
 
 > **Status: experimental community prototype.** The original project was tested on a BMW F07 and Valinet's fork on a
 > BMW F30; **this merged version has not been tested in a car**. Host CI does not verify QNX ABI compatibility or
