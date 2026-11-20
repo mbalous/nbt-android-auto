@@ -609,9 +609,13 @@ static void reset_phone(int bus, int device, int type, int n)
     long long limit;
     snprintf(bus_text, sizeof(bus_text), "%d", bus);
     snprintf(device_text, sizeof(device_text), "%d", device);
-    if (type == PHONE_ACCESSORY)
+    if (type == PHONE_ACCESSORY) {
         setenv("NBT_RESET_AOA", "1", 1);
-    else {
+        if (found_aoa == AOA_PRODUCT_ACCESSORY_ADB)
+            setenv("NBT_AOA_PRODUCT", "2d01", 1);
+        else
+            unsetenv("NBT_AOA_PRODUCT");
+    } else {
         char id[16];
         snprintf(id, sizeof(id), "%04x:%04x", found_v, found_p);
         setenv("NBT_PHONE_ID", id, 1);
