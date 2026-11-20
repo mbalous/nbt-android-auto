@@ -49,15 +49,32 @@ class AudioSafetyTests(unittest.TestCase):
 
         audio = cls.root / "milestone-7/src/audio"
         audio.mkdir(parents=True)
-        for name in ("audio_route.cpp", "audio_route.hpp", "browser_audio.hpp"):
+        for name in ("audio_route.cpp", "audio_route.hpp", "browser_audio.cpp", "browser_audio.hpp"):
             shutil.copyfile(REFERENCE / "milestone-7/src/audio" / name, audio / name)
         run(["git", "apply", str(ROOT / "patches/nbt-aad-audio-route-lifetime.patch")], cwd=cls.root)
+        run(["git", "apply", str(ROOT / "patches/nbt-aad-browser-volume-lock.patch")], cwd=cls.root)
         cls.lifetime = cls.root / "lifetime"
         run(["c++", "-std=c++11", "-Wall", "-Wextra", "-I" + str(audio.parent),
              str(audio / "audio_route.cpp"), str(SOURCE / "test_audio_route_lifetime.cpp"),
              "-pthread", "-o", str(cls.lifetime)])
 
         shutil.copyfile(SOURCE / "audio_a2i/asound_device.hpp", audio / "asound_device.hpp")
+        ref_src = REFERENCE / "milestone-7/src"
+        ref_audio = ref_src / "audio"
+        speex_obj = cls.root / "speex.o"
+        run(["cc", "-O1", "-c", "-I" + str(REFERENCE / "milestone-7/third_party/speexdsp"),
+             "-I" + str(ref_src), str(ref_audio / "speex.c"), "-o", str(speex_obj)])
+        cls.browser_patches = cls.root / "browser_patches"
+        run(["c++", "-std=c++11", "-Wall", "-Wextra",
+             "-I" + str(audio.parent), "-I" + str(ref_src),
+             "-I" + str(REFERENCE / "milestone-7/include"),
+             str(audio / "browser_audio.cpp"), str(audio / "audio_route.cpp"),
+             str(ref_audio / "mixer.cpp"), str(ref_audio / "drift.cpp"),
+             str(ref_audio / "pcm_ring.cpp"), str(ref_audio / "resampler.cpp"),
+             str(ref_audio / "stream_rate.cpp"), str(ref_audio / "playout.cpp"),
+             str(ref_audio / "config.cpp"), str(ref_audio / "speech_focus.cpp"), str(speex_obj),
+             str(SOURCE / "tests/test_browser_audio_patches.cpp"),
+             "-pthread", "-o", str(cls.browser_patches)])
         fake = cls.root / "fake_a2i.c"
         fake.write_text("""
 int A2I_Client_Open(void **h, const void *cfg) { (void)h; (void)cfg; return 1; }
@@ -187,6 +204,19 @@ int A2I_Client_Out_Write(void *h, const void *b, unsigned long n, unsigned x) {
         executable.write_text('#!/bin/sh\ntouch "$TEST_ROUTE_STARTED"\nsleep 0.4\n')
         executable.chmod(0o700)
         run([str(self.lifetime), str(executable), str(self.root / "route-started")])
+
+    def test_browser_audio_patches(self):
+        executable = self.root / "route-remove"
+        executable.write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = "-r" ]; then sleep 0.2; touch "$TEST_REMOVE_DONE"; fi\n'
+            'exit 0\n'
+        )
+        executable.chmod(0o700)
+        done = self.root / "remove-done"
+        if done.exists():
+            done.unlink()
+        run([str(self.browser_patches), str(executable), str(done)])
 
     def test_session_and_release_build_use_same_audio_sources(self):
         import build_all

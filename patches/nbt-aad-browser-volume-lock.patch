@@ -1,25 +1,69 @@
 diff --git a/milestone-7/src/audio/browser_audio.cpp b/milestone-7/src/audio/browser_audio.cpp
 --- a/milestone-7/src/audio/browser_audio.cpp
 +++ b/milestone-7/src/audio/browser_audio.cpp
-@@ -477,8 +477,9 @@ bool BrowserAudio::mediaOnSource(uint64_t now) {   // session thread (it writes
+@@ -57,8 +57,8 @@ void* mixerThunk(void* self) {
+ 
+ BrowserAudio::BrowserAudio()
+     : conn_(0xb8), refocus_(true), thread_(), thread_valid_(false), stop_(false), pcm_failed_(false),
+-      last_sound_ms_(0), last_media_ms_(0), speech_(speech_route_), guidance_to_speech_(false), blocks_(0),
+-      last_stats_ms_(0), was_ducking_(false) {
++      last_sound_ms_(0), last_media_ms_(0), media_gain_set_(false), media_gain_(1.0f), speech_(speech_route_),
++      guidance_to_speech_(false), blocks_(0), last_stats_ms_(0), was_ducking_(false) {
+     consumed_fn_ = NULL;
+     consumed_user_ = NULL;
+     ack_window_ = 0;
+@@ -237,7 +237,11 @@ bool BrowserAudio::openPcm() {
+         stream_[s].mix.pending.clear();
+         stream_[s].mix.pending_offset = 0;
+     }
+-    mixer_.configure(dev_.rate(), kOutCh, duck_cfg_);
++    DuckConfig cfg = duck_cfg_;
++    pthread_mutex_lock(&lock_);
++    if (media_gain_set_) cfg.media_gain = media_gain_ < 0.0f ? 0.0f : (media_gain_ > 1.0f ? 1.0f : media_gain_);
++    pthread_mutex_unlock(&lock_);
++    mixer_.configure(dev_.rate(), kOutCh, cfg);
+     return true;
+ }
+ 
+@@ -477,8 +481,10 @@ bool BrowserAudio::mediaOnSource(uint64_t now) {   // session thread (it writes
  }
  
  void BrowserAudio::setMediaGain(float g) {
 -    // Ramped inside the mixer (per frame, ~50 ms), so this is safe from the UI thread while the mixer thread runs.
+-    mixer_.setMediaGain(g);
 +    pthread_mutex_lock(&lock_);
-     mixer_.setMediaGain(g);
++    media_gain_ = g;
++    media_gain_set_ = true;
 +    pthread_mutex_unlock(&lock_);
  }
  
  void BrowserAudio::refocus(const char* why) {
-@@ -805,8 +806,10 @@ void BrowserAudio::mixerLoop() {
+@@ -804,9 +810,15 @@ void BrowserAudio::mixerLoop() {
+             if (ppm != drift_applied_) { stream_[MEDIA].mix.rs.setTrimPpm(ppm); drift_applied_ = ppm; }
          }
          const bool duck = loud[GUIDANCE] || loud[SYSTEM];
-         // A prompt on the nav prompt channel ducks media too, but must not hold the browser source.
++        const bool speech_duck = duck || speech_.active();
 +        pthread_mutex_lock(&lock_);
-         mixer_.mix(have[MEDIA] ? &in[MEDIA][0] : NULL, have[GUIDANCE] ? &in[GUIDANCE][0] : NULL,
-                    have[SYSTEM] ? &in[SYSTEM][0] : NULL, block, duck || speech_.active(), &out[0]);
++        const bool has_gain = media_gain_set_;
++        const float gain = media_gain_;
 +        pthread_mutex_unlock(&lock_);
++        if (has_gain) mixer_.setMediaGain(gain);
+         // A prompt on the nav prompt channel ducks media too, but must not hold the browser source.
+         mixer_.mix(have[MEDIA] ? &in[MEDIA][0] : NULL, have[GUIDANCE] ? &in[GUIDANCE][0] : NULL,
+-                   have[SYSTEM] ? &in[SYSTEM][0] : NULL, block, duck || speech_.active(), &out[0]);
++                   have[SYSTEM] ? &in[SYSTEM][0] : NULL, block, speech_duck, &out[0]);
          if (loud[MEDIA] || duck) last_sound_ms_ = now;
          if (loud[MEDIA] || stream_[MEDIA].in.started) {   // under lock_: the session thread reads it (mediaOnSource)
              pthread_mutex_lock(&lock_);
+diff --git a/milestone-7/src/audio/browser_audio.hpp b/milestone-7/src/audio/browser_audio.hpp
+--- a/milestone-7/src/audio/browser_audio.hpp
++++ b/milestone-7/src/audio/browser_audio.hpp
+@@ -197,6 +197,8 @@ private:
+     RoutePolicy route_policy_;
+     uint64_t last_sound_ms_;
+     uint64_t last_media_ms_;            // last AA media sound or open media stream (0 = none this session; lock_)
++    bool media_gain_set_;               // live media gain set by setMediaGain() (lock_)
++    float media_gain_;                  // live media gain target for the mixer thread (lock_)
+ 
+     // NBT_SPEECH: guidance on the nav prompt channel. Own route: releaseRoute() cancels route_'s pending jobs.
+     AudioRoute speech_route_;

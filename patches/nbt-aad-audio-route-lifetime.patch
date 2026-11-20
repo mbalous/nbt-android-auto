@@ -65,7 +65,7 @@ diff --git a/milestone-7/src/audio/audio_route.hpp b/milestone-7/src/audio/audio
  
      // Resolves the audioconn binary (env override, then known locations).
      bool configure();
-@@ -68,10 +69,12 @@ public:
+@@ -68,12 +69,17 @@ public:
      // Session ended: every queued / sleeping / retrying job of this route stops before its next audioconn run
      // (an audioconn already running finishes). Jobs queued afterwards (e.g. a release) are not affected.
      void cancelPending();
@@ -77,8 +77,13 @@ diff --git a/milestone-7/src/audio/audio_route.hpp b/milestone-7/src/audio/audio
 +    void workerFinished();
  
  private:
++    AudioRoute(const AudioRoute&);
++    AudioRoute& operator=(const AudioRoute&);
++
      bool run(char op, uint32_t a, uint32_t b, bool two_args, GrantedFn onGranted, void* user, int delayMs,
-@@ -81,6 +84,8 @@ private:
+              RemovedFn onRemoved = 0, bool retry = true);
+     bool spawn(void* job);
+@@ -81,6 +87,8 @@ private:
      std::string path_;
      std::string suffix_;
      pthread_mutex_t lock_;
@@ -87,6 +92,17 @@ diff --git a/milestone-7/src/audio/audio_route.hpp b/milestone-7/src/audio/audio
      unsigned gen_;          // bumped by cancelPending()
      bool buildBusy_;        // a build worker of generation busyGen_ is alive
      unsigned busyGen_;
+diff --git a/milestone-7/src/audio/browser_audio.cpp b/milestone-7/src/audio/browser_audio.cpp
+--- a/milestone-7/src/audio/browser_audio.cpp
++++ b/milestone-7/src/audio/browser_audio.cpp
+@@ -101,6 +101,7 @@ BrowserAudio::BrowserAudio()
+ 
+ BrowserAudio::~BrowserAudio() {
+     stop();
++    waitForRoute();
+     for (int s = 0; s < NSTREAMS; ++s) delete stream_[s].in.ring;
+     pthread_mutex_destroy(&lock_);
+ }
 diff --git a/milestone-7/src/audio/browser_audio.hpp b/milestone-7/src/audio/browser_audio.hpp
 --- a/milestone-7/src/audio/browser_audio.hpp
 +++ b/milestone-7/src/audio/browser_audio.hpp
