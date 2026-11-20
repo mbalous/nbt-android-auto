@@ -1,5 +1,7 @@
 # NBT Android Auto
 
+[![CI](https://github.com/mbalous/nbt-android-auto/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mbalous/nbt-android-auto/actions/workflows/ci.yml)
+
 Wired Android Auto for the **original BMW NBT head unit** (CIC successor, 2013–2016, QNX 6.5 on x86), without an
 additional Android Auto interface. The phone's picture uses the NBT's video path, the iDrive controller handles input,
 and compatible instrument clusters can display navigation guidance.
