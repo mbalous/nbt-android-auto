@@ -261,7 +261,7 @@ def preflight(nbt, log, root):
         raise InstallError('The HMI data directory is read-only.')
 
 
-def install(nbt, log, root='', force=False):
+def install(nbt, log, root='', force=False, restart=False):
     manifest = load_manifest()
     log('Package %s, %d files' % (manifest.get('version', '?'), len(manifest['files'])))
     preflight(nbt, log, root)
@@ -274,6 +274,7 @@ def install(nbt, log, root='', force=False):
     # --force writes everything)
     sums = {} if force else installed_sums(nbt, [root + e['target'] for e in files])
     skipped = 0
+    plugin_updated = False
     for entry in files:
         target = root + entry['target']
         name = entry['target'].split('/')[-1]
@@ -284,6 +285,8 @@ def install(nbt, log, root='', force=False):
             continue
         log('  write %-46s %8d bytes' % (name, len(entry['data'])))
         nbt.put(entry['data'], target, entry['mode'])
+        if name == 'libNbtAndroidAuto.so':
+            plugin_updated = True
     log('  %d of %d files unchanged, not written again' % (skipped, len(files)))
     dpi = root + RT_DIR + '/vid.dpi'
     nbt.run("test -f '%s' || echo 100 > '%s'" % (dpi, dpi))
@@ -291,6 +294,14 @@ def install(nbt, log, root='', force=False):
     nbt.run("echo '%s' > '%s/VERSION'" % (manifest.get('version', '?'), root + RT_DIR))
     _, out, _ = nbt.run("ls -l '%s' '%s'" % (root + RT_DIR, root + PLUGIN_DIR), check=False)
     log(out.decode('utf-8', 'replace').rstrip())
+    if restart and not root:
+        log('  restarting Android Auto runtime (restart.sh)')
+        nbt.run("'%s/restart.sh'" % RT_DIR)
+        if plugin_updated:
+            log('  note: libNbtAndroidAuto.so changed; restart iDrive to load the updated HMI plugin')
+        else:
+            log('Done. Android Auto runtime restarted.')
+        return
     log(tr('done_install'))
 
 
@@ -350,7 +361,7 @@ def run_cli(args):
                       args.root)
         else:
             if args.cli == 'install':
-                install(nbt, print, args.root, force=args.force)
+                install(nbt, print, args.root, force=args.force, restart=args.restart)
             else:
                 ACTIONS[args.cli](nbt, print, args.root)
     finally:
@@ -467,6 +478,8 @@ def main():
     parser.add_argument('--user', default='root')
     parser.add_argument('--output', help='logs: target zip file')
     parser.add_argument('--force', action='store_true', help='install: write every file, also the unchanged ones')
+    parser.add_argument('--restart', action='store_true',
+                        help='install: run restart.sh after verifying so runtime updates take effect immediately')
     parser.add_argument('--known-hosts', help='verify the SSH host key against this known_hosts file')
     # development only: key login and installing below a test directory (e.g. in a QNX build VM)
     parser.add_argument('--key', help=argparse.SUPPRESS)

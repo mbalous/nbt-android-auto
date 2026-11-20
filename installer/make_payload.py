@@ -64,14 +64,25 @@ def built_files(built, pem_dir):
     return result
 
 
+def latest_build(build_root=None):
+    """Return the newest build/qnx-build-* folder containing programs/."""
+    root = build_root or (REPO / 'build')
+    candidates = sorted(p for p in root.glob('qnx-build-*') if (p / 'programs').is_dir())
+    if not candidates:
+        raise SystemExit('No build/qnx-build-* folder with programs/ found; pass --built <folder>')
+    return candidates[-1]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('version', nargs='?', default=time.strftime('%Y.%m.%d'))
-    parser.add_argument('--built', type=Path, required=True, help='output folder of scripts/build_all.py')
+    parser.add_argument('--built', type=Path,
+                        help='output folder of scripts/build_all.py (default: newest build/qnx-build-*)')
     parser.add_argument('--pem-dir', type=Path, default=OUT / 'rt', help='folder with cert.pem, key.pem, ca.pem')
     args = parser.parse_args()
     version = args.version
-    files = built_files(args.built.resolve(), args.pem_dir.resolve())
+    built = args.built.resolve() if args.built else latest_build().resolve()
+    files = built_files(built, args.pem_dir.resolve())
     pems = {}
     for source, name, _, _ in files:   # read the PEMs before OUT is replaced (they may live in it)
         if name.endswith('.pem'):

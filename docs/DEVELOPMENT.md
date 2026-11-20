@@ -133,7 +133,10 @@ Which program is built from which files: [src/README.md](../src/README.md).
    git -C .local/reference-nbt-aad checkout 4328560e33d622243b68e8e1bb0766180fd954e5
    ```
 
-   Keep this checkout unmodified; the build applies our changes to a copy.
+   Keep this checkout unmodified; the build applies our changes to a copy. When bumping the pinned revision, update
+   `NBT_AAD_REVISION` in `scripts/build_all.py` (all other Python build/test scripts import it from there), plus
+   `flash-aa-open.sh`, `.github/workflows/ci.yml`, and docs, then check `scripts/aa_session_overlay.py` and
+   `patches/*.patch` against the new commit.
 2. **Two HMI libraries from your own NBT** for the plugin: copy `libAppFramework.A.so` and `libCoreFramework.A.so` from
    the HMI's library directory on the head unit (read only) into a folder in the VM, e.g. `~/.nbt-build/hmi-libs/`.
    They are BMW software: never commit or publish them. Without them everything except the plugin is built.
@@ -201,9 +204,10 @@ read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped prog
 
 ## Installer and release
 
-1. `python installer/make_payload.py <version> --built build/qnx-build-<time> --pem-dir <folder with cert.pem, key.pem, ca.pem>`
-   collects everything into `installer/payload/` and writes `manifest.json` with SHA-256 per file. The PEM files are
-   the public NBT-AAD head-unit identity; take them from `rt/` of a release payload. `--built` is required.
+1. `python installer/make_payload.py <version> [--built build/qnx-build-<time>] [--pem-dir <folder>]`
+   collects everything into `installer/payload/` and writes `manifest.json` with SHA-256 per file. `--built`
+   defaults to the newest `build/qnx-build-*` folder with `programs/`; `--pem-dir` defaults to `installer/payload/rt`
+   (the PEM files are read before the folder is replaced; on a fresh checkout take them from `rt/` of a release payload).
 2. `installer/build_windows.ps1` builds the Windows .exe, `installer/build_mac.sh` the macOS app (on a Mac).
    paramiko must stay below 4 (the NBT only offers `ssh-rsa`).
 3. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install

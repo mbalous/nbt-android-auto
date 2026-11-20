@@ -32,21 +32,29 @@ git am "%USERPROFILE%\Downloads\<patch file>.patch"
 python scripts\build_all.py
 ```
 
-For WSL SSH compatibility and build options, see the [QNX build guide](DEVELOPMENT.md#qnx-vm).
+From WSL with Windows OpenSSH (see the [QNX build guide](DEVELOPMENT.md#qnx-vm)):
+```sh
+python3 scripts/build_all.py --windows-openssh
+```
 
-3. Package, with the newest build folder name in place of `<newest>`:
+3. Package (auto-picks the newest `build/qnx-build-*` and preserves PEMs already in `installer/payload/rt`):
 ```
-python installer\make_payload.py --built build\qnx-build-<newest> --pem-dir .local\pem
+python installer\make_payload.py
 ```
+Pass `--built build\qnx-build-<time>` to pick a specific build, or `--pem-dir .local\pem` on the first run before
+`installer/payload/rt` has the PEM files.
 
 4. Install:
 ```
-python installer\nbt_aa_installer.py --cli install --known-hosts <verified-known-hosts>
+python installer\nbt_aa_installer.py --cli install --known-hosts <verified-known-hosts> --restart
 ```
 Files already on the head unit with the same content are not written again (`same` in the output). To write
-everything anyway, add `--force`. Verify the head unit's host key independently before adding it to the known-hosts
-file. Without `--known-hosts`, the installer accepts an unknown key. See the [installer safety notes](../installer/README.md#safer-car-testing)
-before deploying; preflight writes test files and a failed installation may be partial.
+everything anyway, add `--force`. `--restart` runs `restart.sh` after verification so runtime-only updates
+(`native_service`, `nbt_android_auto`, etc.) take effect immediately without rebooting iDrive; if
+`libNbtAndroidAuto.so` changed, still reboot iDrive. Verify the head unit's host key independently before adding it
+to the known-hosts file. Without `--known-hosts`, the installer accepts an unknown key. See the
+[installer safety notes](../installer/README.md#safer-car-testing) before deploying; preflight writes test files and
+a failed installation may be partial.
 
 5. Reboot the head unit: Multimedia → Android Auto → **Restart system**, or from the laptop:
 ```
