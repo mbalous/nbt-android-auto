@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <dlfcn.h>
+#include "usb_wait.h"
 #ifdef NBT_AA_CAPTURE
 #include "aa_video_capture.h"
 #endif
@@ -130,33 +131,20 @@ static int version_response(const unsigned char* b, unsigned n, int verbose) {
     return major == 1 && status == 0;
 }
 struct completion {
-    pthread_mutex_t mutex;
-    pthread_cond_t condition;
-    int done;
+    struct usb_wait wait;
     int rc;
     _Uint32t status, actual;
 };
 static void completed(struct usbd_urb* urb, struct usbd_pipe* pipe, void* context) {
     struct completion* c = (struct completion*)context;
     (void)pipe;
-    pthread_mutex_lock(&c->mutex);
+    pthread_mutex_lock(&c->wait.mutex);
     c->rc = usbd_urb_status(urb, &c->status, &c->actual);
-    c->done = 1;
-    pthread_cond_signal(&c->condition);
-    pthread_mutex_unlock(&c->mutex);
+    usb_wait_done_locked(&c->wait);
+    pthread_mutex_unlock(&c->wait.mutex);
 }
 static int await_completion(struct completion* c, unsigned milliseconds) {
-    struct timespec deadline;
-    int rc = 0, done;
-    clock_gettime(CLOCK_REALTIME, &deadline);
-    deadline.tv_sec += milliseconds / 1000;
-    deadline.tv_nsec += (milliseconds % 1000) * 1000000L;
-    if (deadline.tv_nsec >= 1000000000L) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000L; }
-    pthread_mutex_lock(&c->mutex);
-    while (!c->done && (!rc || rc == EINTR)) rc = pthread_cond_timedwait(&c->condition, &c->mutex, &deadline);
-    done = c->done;
-    pthread_mutex_unlock(&c->mutex);
-    return done;
+    return usb_wait_await(&c->wait, milliseconds);
 }
 /* timeout_ms: usbd_io timeout of the transfer; the completion is awaited 1 s longer (2000 everywhere, except the session's
  * bulk IN reads, see capture_transfer) */
@@ -164,24 +152,31 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual,
                          int* completion_rc, unsigned timeout_ms) {
     struct completion c;
-    int rc;
+    int rc, waited;
     memset(&c, 0, sizeof(c));
-    pthread_mutex_init(&c.mutex, NULL); pthread_cond_init(&c.condition, NULL);
+    rc = usb_wait_init(&c.wait);
+    if (rc) {
+        *status = 0; *actual = 0; *completion_rc = -1;
+        printf("AA_BULK_COMPLETION_INIT_FAILED rc=%d\n", rc);
+        return rc;
+    }
     rc = usbd_setup_bulk(urb, input ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, buffer, size);
     if (rc == EOK) rc = usbd_io(urb, pipe, completed, &c, timeout_ms);
-    if (rc == EOK && !await_completion(&c, timeout_ms + 1000)) {
+    if (rc == EOK) waited = await_completion(&c, timeout_ms + 1000);
+    else waited = 0;
+    if (rc == EOK && waited != 1) {
         puts("AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
         usbd_abort_pipe(pipe);
-        if (!await_completion(&c, 1000)) {
+        if (await_completion(&c, 1000) != 1) {
             /* Do not free buffers/URBs still referenced by the USB callback. */
             puts("AA_BULK_ABORT_UNCONFIRMED_EXITING_NO_RETRY");
             _exit(6);
         }
-        rc = ETIMEDOUT;
+        rc = waited < 0 ? -waited : ETIMEDOUT;
     }
     *status = c.status; *actual = c.actual;
-    *completion_rc = c.done ? c.rc : -1;
-    pthread_cond_destroy(&c.condition); pthread_mutex_destroy(&c.mutex);
+    *completion_rc = c.wait.done ? c.rc : -1;
+    usb_wait_destroy(&c.wait);
     return rc;
 }
 static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
@@ -193,8 +188,7 @@ static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned 
 static void* signal_test_completion(void* context) {
     struct completion* c = (struct completion*)context;
     usleep(10000);
-    pthread_mutex_lock(&c->mutex); c->done = 1;
-    pthread_cond_signal(&c->condition); pthread_mutex_unlock(&c->mutex);
+    usb_wait_signal(&c->wait);
     return NULL;
 }
 #ifdef NBT_AA_CAPTURE
@@ -271,13 +265,16 @@ static int completion_selftest(void) {
     pthread_t thread;
     int ok;
     memset(&c, 0, sizeof(c));
-    pthread_mutex_init(&c.mutex, NULL); pthread_cond_init(&c.condition, NULL);
+    if (usb_wait_init(&c.wait)) return 0;
     ok = !await_completion(&c, 5);
-    if (pthread_create(&thread, NULL, signal_test_completion, &c) != 0) return 0;
-    ok = await_completion(&c, 1000) && ok;
+    if (pthread_create(&thread, NULL, signal_test_completion, &c) != 0) {
+        usb_wait_destroy(&c.wait);
+        return 0;
+    }
+    ok = await_completion(&c, 1000) == 1 && ok;
     pthread_join(thread, NULL);
-    ok = await_completion(&c, 5) && ok; /* Completion arrived before waiting. */
-    pthread_cond_destroy(&c.condition); pthread_mutex_destroy(&c.mutex);
+    ok = await_completion(&c, 5) == 1 && ok; /* Completion arrived before waiting. */
+    usb_wait_destroy(&c.wait);
     return ok;
 }
 #ifdef NBT_AA_TLS_HANDSHAKE
