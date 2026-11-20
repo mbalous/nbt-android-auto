@@ -13,7 +13,7 @@ if test -e $P/disabled; then echo 'disabled'; exit 0; fi
 if test -e $R/service.lock; then echo 'service already running (lock)'; exit 0; fi
 mkdir -p $R
 chmod 700 $R
-for f in native_service oneplus_native nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
+for f in native_service nbt_android_auto nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
   cp $P/$f $R/$f && chmod 700 $R/$f
 done
 cp $P/cert.pem $P/key.pem $P/ca.pem $R/ && chmod 600 $R/*.pem

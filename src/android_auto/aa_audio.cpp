@@ -94,7 +94,7 @@ void shutdown()
 
 // ---- link stubs ------------------------------------------------------------------------------------------------------
 // AudioBackend's default startMic()/stopMic() (upstream audio/backend.hpp) reference MicUplink, which links the car's
-// A2I client library directly. oneplus_native never starts the car microphone, so these two definitions replace
+// A2I client library directly. nbt_android_auto never starts the car microphone, so these two definitions replace
 // upstream's mic_uplink.cpp / a2i_stream.cpp instead of adding liba2i_client.so as a load-time dependency.
 bool nbt::MicUplink::start()
 {

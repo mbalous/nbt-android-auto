@@ -11,7 +11,7 @@ put() {  # put SOURCE TARGET MODE
   cp $U/$1 $2.tmp && cmp -s $U/$1 $2.tmp && chmod $3 $2.tmp && mv $2.tmp $2 && cmp -s $U/$1 $2 && echo "ok $1" || { echo "FAILED $1"; ok=0; }
 }
 put native_service $P/native_service 700
-put oneplus_native $P/oneplus_native 700
+put nbt_android_auto $P/nbt_android_auto 700
 put nbt_knob $P/nbt_knob 700
 put nbt_hwvideo $P/nbt_hwvideo 700
 put decode_runner $P/decode_runner 700

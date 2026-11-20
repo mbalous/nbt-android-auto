@@ -11,19 +11,19 @@ T=/fs/ram3/nbt-video-test
 if test -e $R/service.lock; then echo 'SERVICE LOCK EXISTS - not starting'; ls -l $R; exit 2; fi
 mkdir -p $R
 chmod 700 $R
-cp $P/native_frames $P/fifo_http $P/decode_runner $P/accessory_window $P/oneplus_native $P/cert.pem $P/key.pem $P/ca.pem $R/
+cp $P/native_frames $P/fifo_http $P/decode_runner $P/accessory_window $P/nbt_android_auto $P/cert.pem $P/key.pem $P/ca.pem $R/
 cp $T/native_service_live $R/native_service
 cp $T/nbt_wal_present $R/nbt_wal_present 2>/dev/null
 # HARDWARE VIDEO MODE (car-proven 2026-11-07): decoder into the stock video window, nbt_hwvideo shows it via VideoApp
 cp $T/nbt_hwvideo $T/decode_runner $R/ && chmod 700 $R/nbt_hwvideo $R/decode_runner
 touch $R/hw.mode
-# newer builds (2026-11-06 night): oneplus_native with controller FIFO and phone list, nbt_knob (iDrive controller)
-if test -f $T/oneplus_native; then cp $T/oneplus_native $R/oneplus_native; echo 'using oneplus_native from RAM test dir'; fi
+# newer builds (2026-11-06 night): nbt_android_auto with controller FIFO and phone list, nbt_knob (iDrive controller)
+if test -f $T/nbt_android_auto; then cp $T/nbt_android_auto $R/nbt_android_auto; echo 'using nbt_android_auto from RAM test dir'; fi
 if test -f $T/nbt_knob; then cp $T/nbt_knob $R/nbt_knob; chmod 700 $R/nbt_knob; echo 'nbt_knob present: controller forwarding on'; fi
 # any Android phone works without a list (TLS: Google Automotive Link chain); peer.pin would restore a fixed pin
 if test -f $T/peer.pin; then cp $T/peer.pin $R/peer.pin; fi
 cp /opt/mm/bin/NmeCmdLine /opt/mm/lib/cinemo/cinemo_classes.xml /opt/mm/lib/cinemo/cinemo_links.xml $R/
-chmod 700 $R/native_service $R/native_frames $R/fifo_http $R/decode_runner $R/accessory_window $R/oneplus_native $R/NmeCmdLine
+chmod 700 $R/native_service $R/native_frames $R/fifo_http $R/decode_runner $R/accessory_window $R/nbt_android_auto $R/NmeCmdLine
 chmod 600 $R/*.pem
 rm -f $R/shadow.path
 # --idle 600: an Android Auto screen that does not change sends no new frames, keep the last picture for 10 minutes;
@@ -53,7 +53,7 @@ cat status.txt
 echo '=== wal.args'
 cat wal.args
 echo '=== processes'
-pidin ar | grep -e native_service -e accessory_window -e oneplus_native -e nbt_hwvideo -e nbt_knob | grep -v grep
+pidin ar | grep -e native_service -e accessory_window -e nbt_android_auto -e nbt_hwvideo -e nbt_knob | grep -v grep
 echo '=== WAL statistics must keep ticking'
 sloginfo 2>/dev/null | grep delta_t | tail -2
 echo '=== END'

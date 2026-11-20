@@ -5,7 +5,8 @@ to be dangerous on the car. It is kept because the findings are useful and the c
 explored. The development log in [docs/history/](../docs/history/) tells the full story.
 
 Paths inside these files still point to their old places (`src/...`, `scripts/...`) and to private folders; expect to
-adapt them before building anything here.
+adapt them before building anything here. Executable names have been updated to the current names and may not match
+the historical builds.
 
 | Folder | What it was | Outcome |
 |---|---|---|

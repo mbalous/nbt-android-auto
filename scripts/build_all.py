@@ -41,7 +41,7 @@ MBEDTLS_URL = ("https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-%s
 # Mbed TLS options the QNX 6.5 gcc 4.4 cannot build
 MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 # payload binaries built here (installer/payload/<name>)
-PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
+PROGRAMS = {"nbt_android_auto": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt", "audioconn": "rt",
             "libNbtAndroidAuto.so": "plugin"}
 
@@ -198,7 +198,7 @@ def main():
     result = remote("cd %s && tar xf source.tar && HMI_LIBS=%s sh build-qnx.sh" % (folder, args.hmi_libs), timeout=1800)
     log = result.stdout.decode(errors="replace")
     (out / "build.log").write_text(log, encoding="utf-8")
-    print(log[log.find("== oneplus_native"):] if "== oneplus_native" in log else log[-3000:])
+    print(log[log.find("== nbt_android_auto"):] if "== nbt_android_auto" in log else log[-3000:])
     if result.returncode != 0 or "BUILD_QNX_DONE" not in log:
         raise SystemExit("VM build failed, full log: " + str(out / "build.log"))
 

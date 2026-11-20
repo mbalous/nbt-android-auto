@@ -1,5 +1,7 @@
 # Tacho (6WB) – Navi-Grafik über MOST „HUDTerminal“ (Stand 8.11.2026)
 
+Historical session executable names in this document have been normalized to the current name.
+
 ## Ergebnis
 - Der 6WB-Kombi ist **kein Display des NBT**. `/etc/system/config/nvkddisplay.conf` kennt nur das LVDS-Panel 1280x480 (CID),
   und auf der Intel-Seite gibt es nur `DisplayManager:0`.
@@ -98,7 +100,7 @@ die Parameter:
   - Weg B: unbenutzte Funktionsnummern von 82/00 mit tx=0 anfragen und die Fehlercodes (op F) auswerten:
     04 = OpType, 05/06 = Länge/Parameter.
 - **nbt_cluster v1:** Code in `src/android_auto/knob/nbt_cluster.cpp`. Lief nur im RAM, ist nach dem Neustart weg und
-  nicht im Paket. Nav-Export in `aa_video_capture.cpp` (`nav.state`) ist gebaut (`center-test/oneplus_native`), aber
+  nicht im Paket. Nav-Export in `aa_video_capture.cpp` (`nav.state`) ist gebaut (`center-test/nbt_android_auto`), aber
   ebenfalls nicht im Paket. Zu beheben: falsche BMW-Erkennung (gesendete Befehle merken), Aufräumen beim Ende,
   1-km-Logik, Umriss-Pfeil.
 

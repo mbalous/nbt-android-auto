@@ -17,7 +17,7 @@ if ($LASTEXITCODE -ne 0) { throw 'package or plugin directory missing' }
 # local file -> target path on the car
 $files = [ordered]@{
     "$src\native_service"                        = "$P/native_service"
-    "$src\oneplus_native"                        = "$P/oneplus_native"
+    "$src\nbt_android_auto"                      = "$P/nbt_android_auto"
     "$src\nbt_knob"                              = "$P/nbt_knob"
     "$src\nbt_hwvideo"                           = "$P/nbt_hwvideo"
     "$src\decode_runner"                         = "$P/decode_runner"

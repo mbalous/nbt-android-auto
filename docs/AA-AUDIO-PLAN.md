@@ -1,5 +1,7 @@
 # Android Auto audio without Bluetooth – status 7 November 2026
 
+The session executable name in this historical report is normalized to its current name.
+
 ## Findings
 
 - **A2I beep test** (`nbt_a2i_beep`, sources and scripts in `experiments/audio/`):
@@ -95,7 +97,7 @@ Verified on a car (BMW F07 2014, original HU_NBT)
 - `experiments/audio/car-route-beep-test.sh`: with 0xb8 built, 3 beeps were heard on `input_stereo_3`; inputs 1, 2, 4 and 5
   were silent.
 - Android Auto music through the A2I output plays (reported by the car owner as clean).
-- CPU (`hogs`, Android Auto + music + scrolling, two cores): `oneplus_native` incl. mixer about 7 %, `dev-ioamp-router`
+- CPU (`hogs`, Android Auto + music + scrolling, two cores): `nbt_android_auto` incl. mixer about 7 %, `dev-ioamp-router`
   about 5 %; the video decoder (`io-nme`) about 34 %.
 
 Not verified / open

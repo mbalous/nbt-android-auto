@@ -1,6 +1,6 @@
 // nbt_audioconn - an `audioconn`-compatible route tool for the ORIGINAL BMW HU_NBT, which has no audioconn.
 //
-// NBT-AAD's BrowserAudio (oneplus_native, browser audio mode) runs `audioconn -b 0x<conn>` when Android Auto starts
+// NBT-AAD's BrowserAudio (nbt_android_auto, browser audio mode) runs `audioconn -b 0x<conn>` when Android Auto starts
 // playing and `audioconn -r 0x<conn>` after silence; exit status 0 = granted. On NBT Evo audioconn is a stock program.
 // Here the same request is sent the way HmiMain3D itself sends it (offline analysis 2026-11-15, docs/AA-AUDIO-PLAN.md):
 //
@@ -14,7 +14,7 @@
 //
 // Connection 0xB8 is the browser audio connection (NBT Evo: BrowserFront, A2I input_stereo_3). It is an interrupting
 // source: while it is built the radio / Bluetooth source is paused. native_service therefore removes it after every
-// session even when oneplus_native died without doing so (route state file, see below).
+// session even when nbt_android_auto died without doing so (route state file, see below).
 //
 // usage: nbt_audioconn -b 0x<conn>      build    exit 0 granted, 1 refused, 3 no answer, 4 no ConnectionMaster / link
 //        nbt_audioconn -r 0x<conn>      remove   same exit codes

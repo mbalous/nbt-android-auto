@@ -61,6 +61,9 @@ Unlocking SSH changes the head unit's configuration. As with everything here, yo
 
 ## Install
 
+If upgrading from a version before the executable rename, **uninstall the previous package first** using the installer,
+then restart iDrive before installing the new package. The installer does not migrate old files automatically.
+
 1. Download the installer from [Releases](../../releases): `NBT-AndroidAuto-Installer.exe` (Windows) or the macOS app.
    Alternatively run the Python version: `pip install "paramiko>=3.4,<4"`, then `python installer/nbt_aa_installer.py`
    with the `payload/` folder from the release next to it.
@@ -85,7 +88,7 @@ phone model.
 ## How it works (short)
 
 ```
-Phone ──USB/AOA──▶ oneplus_native (Android Auto protocol, TLS, H.264)
+Phone ──USB/AOA──▶ nbt_android_auto (Android Auto protocol, TLS, H.264)
                      │ annexb.fifo
                      ▼
                    fifo_http ──HTTP──▶ decode_runner ──▶ io-nme / Cinemo NmeDeviceScreen (stock hardware video)
