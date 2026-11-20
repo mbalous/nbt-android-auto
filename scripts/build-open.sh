@@ -41,8 +41,9 @@ if want nbt_android_auto; then
   echo "== nbt_android_auto"
   cd $A
   $CC -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c nbt_android_auto.c -o $W/nbt_android_auto.o
-  $CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp \
-    $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a \
+  $CXX -O2 $AAINC -c aa_video_capture.cpp -o $W/aa_video_capture.o
+  $CXX $AAINC aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp \
+    $W/aa_video_capture.o $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a \
     $TLSLIBS -lsocket -lm -lusbdi $LIBS -o $OUT/nbt_android_auto
   cd $W
 fi

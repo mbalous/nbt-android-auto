@@ -98,13 +98,16 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 |---|---|
 | Mbed TLS 3.6.7 | release archive + `scripts/mbedtls_legacy_time.py` (old phone certificate dates) + QNX config (no AES-NI/ASM/PadLock), static libraries |
 | NBT-AAD core `libnbt_aa_core.a` | upstream `milestone-7/src` + `scripts/aa_session_overlay.py` + `patches/*.patch` + our `aa_cryptor_mbedtls.cpp` (Mbed TLS instead of OpenSSL) |
-| `nbt_android_auto` | `nbt_android_auto.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp`, `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
+| `nbt_android_auto` | `nbt_android_auto.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp` (`-O2`), `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
 | `native_service` | C, `-O2` |
 | `accessory_window` | C, no optimisation |
 | `decode_runner` | C++, `-O2` |
 | `fifo_http` | C++, no optimisation |
 | `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | C++ `-O1`, with the MOST/DSI client from `knob/ref/` |
 | `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
+
+The video capture optimization has not yet been validated on the head unit or measured for FPS. The decoder itself
+is the stock Cinemo player; optimizing capture does not guarantee faster decoding or presentation.
 
 **Verified on 2026-11-11** against installer 2026.11.10.2: `native_service`, `decode_runner`, `fifo_http`,
 `accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` were byte-identical; the session executable,
