@@ -1,6 +1,6 @@
 """Build the head-unit programs with the open QNX 6.5.0 toolchain (no QNX SDP, no VM).
 
-Prepares the sources exactly like scripts/build_all.py (NBT-AAD at 41975f2 + overlay + patches, Mbed TLS 3.6.7 with
+Prepares the sources exactly like scripts/build_all.py (NBT-AAD at 4328560 + overlay + patches, Mbed TLS 3.6.7 with
 the QNX config) and runs scripts/build-open.sh in the toolchain container (toolchain/qnx-open). The toolchain must be
 built once first, see toolchain/README.md.
 
@@ -29,7 +29,7 @@ from build_all import PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_rep
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
-                        help="NBT-AAD checkout at commit 41975f2")
+                        help="NBT-AAD checkout at commit 4328560")
     parser.add_argument("--programs", help="space-separated list (default: all supported programs including HMI plugin)")
     parser.add_argument("--reuse", type=Path,
                         help="installer payload folder (rt/, plugin/) to take programs from that were not built")

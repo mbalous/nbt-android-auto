@@ -340,6 +340,54 @@ void nav_status(uint16_t id, const uint8_t* b, size_t len, void*)
     nav_write();
 }
 
+// Media playback channel (ch 12): write playback state to /fs/ram3/nbt-aa-media (for nbt_knob) and now-playing
+// metadata atomically to NBT_NOWPLAYING_FILE (for nbt_cluster / HUD).
+void write_now_playing(const std::string* song, const std::string* artist, uint32_t state)
+{
+    static std::string last_song, last_artist;
+    const char* path = getenv("NBT_NOWPLAYING_FILE");
+    if (!path || strncmp(path, "/fs/ram3/", 9))
+        return;
+    if (song)
+        last_song = song->substr(0, 120);
+    if (artist)
+        last_artist = artist->substr(0, 120);
+    const std::string tmp = std::string(path) + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "w");
+    if (!f)
+        return;
+    fprintf(f, "state=%u\nsong=%s\nartist=%s\n", state == 0xFFFFFFFFu ? 0u : state, last_song.c_str(),
+            last_artist.c_str());
+    fclose(f);
+    rename(tmp.c_str(), path);
+}
+
+void media_status(uint16_t id, const uint8_t* b, size_t len, void*)
+{
+    static uint32_t last_state = 0xFFFFFFFFu;
+    if (id == 0x8001) { // MediaPlaybackStatus {state=1}
+        long long x;
+        if (pb_int(b, len, 1, &x)) {
+            const uint32_t st = (uint32_t)x;
+            if (st != last_state) {
+                last_state = st;
+                if (FILE* mf = fopen("/fs/ram3/nbt-aa-media", "w")) {
+                    fprintf(mf, "%u\n", st);
+                    fclose(mf);
+                }
+                write_now_playing(0, 0, st);
+            }
+        }
+    } else if (id == 0x8003 && len > 0) { // MediaPlaybackMetadata {song=1, artist=2}
+        const std::string song = pb_str(b, len, 1);
+        const std::string artist = pb_str(b, len, 2);
+        if (!song.empty() || !artist.empty()) {
+            printf("[AASession] now playing: '%s' - '%s'\n", song.c_str(), artist.c_str());
+            write_now_playing(&song, &artist, last_state);
+        }
+    }
+}
+
 } // namespace
 
 namespace {
@@ -530,9 +578,10 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
 }
 
 // AASession video frame callback
-void video(uint32_t, const uint8_t* p, size_t n, uint64_t pts, void* v)
+void video(uint32_t, std::vector<uint8_t>& frame_data, size_t data_offset, size_t data_len, uint64_t pts, void* v)
 {
-    save((Capture*)v, p, n, pts, false);
+    if (data_offset <= frame_data.size() && data_len <= frame_data.size() - data_offset)
+        save((Capture*)v, data_len ? &frame_data[data_offset] : 0, data_len, pts, false);
 }
 
 // Android Auto sound into the car (2026-11-18, aa_media_out.hpp): the service sets NBT_AA_MEDIA_OUT to the io-amp input
@@ -903,6 +952,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     bool media_audio_started = false;
     if (c.live) {
         session.setNavStatusCallback(nav_status, 0);
+        session.setMediaStatusCallback(media_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         unlink(kExitRequest);
         session.setVideoFocusCallback(focus_request, &c);
@@ -1033,7 +1083,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
                 bye_reason = "time_limit";
             if (bye_reason) {
                 printf("AA_BYEBYE requested reason=%s signal=%d uptime_ms=%lld\n", bye_reason, signo, now_ms());
-                session.postByeBye();
+                session.byeAndWait(0);
                 bye_until = now_ms() + 1000;
             }
         }

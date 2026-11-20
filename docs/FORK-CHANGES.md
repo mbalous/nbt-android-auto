@@ -85,7 +85,7 @@ The car's volume level adjusts Android Auto media gain on both `f6` and the opti
 Create `aa-volume-off` in the package directory to disable software volume adjustment.
 
 The phone's playing / paused state comes from the session: a small NBT-AAD core patch
-(`patches/nbt-aad-aa_session-media-state.patch`) writes it to `/fs/ram3/nbt-aa-media` (2 = playing, 3 = paused).
+(`aa_video_capture.cpp` via `setMediaStatusCallback`) writes it to `/fs/ram3/nbt-aa-media` (2 = playing, 3 = paused).
 
 ## Connection, USB, service and decoder
 

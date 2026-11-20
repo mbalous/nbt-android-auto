@@ -335,7 +335,7 @@ bool aaAudioActive() {
     fclose(f);
     return active;
 }
-// now playing, written by the AA session (patches/nbt-fork-media-keys-nowplaying.patch): state=, song=, artist=
+// now playing, written by the AA session (aa_video_capture.cpp): state=, song=, artist=
 struct NowPlaying { int state; std::string song, artist; };
 bool readNowPlaying(NowPlaying& np) {
     FILE* f = fopen("/fs/ram3/nbt-aa-native/nowplaying", "r");
