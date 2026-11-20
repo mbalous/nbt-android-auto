@@ -4,7 +4,7 @@
 # in a folder prepared the same way (src/, reference/, mbedtls-3.6.7/).
 # Differences to the SDP build: gcc/g++ instead of qcc, the C++ runtime (GNU libstdc++ 4.4.2) is linked
 # statically instead of Dinkum libcpp.so.4, and popen() comes from libqnxopen.a.
-# Programs: $PROGRAMS (default: all except the HMI plugin, which needs the NBT's HMI libraries).
+# Programs: $PROGRAMS (default: supported programs and the stub-linked HMI plugin).
 set -e
 T=i486-pc-nto-qnx6.5.0
 W=`pwd`

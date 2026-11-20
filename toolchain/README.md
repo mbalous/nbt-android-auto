@@ -26,7 +26,7 @@ Result: `build/qnx-open` (about 80 MB, git-ignored). Run any tool with `toolchai
 
 ```sh
 python3 scripts/build_open.py --reuse <installer payload folder>
-python3 installer/make_payload.py <version> --built build/open-build-<time> --pem-dir <payload>/rt
+python3 installer/make_payload.py <version> --built build/open-build-<time>-<id> --pem-dir <payload>/rt
 ```
 
 `build_open.py` prepares the sources exactly like `build_all.py` (NBT-AAD at 41975f2, overlay, patches, Mbed TLS
@@ -57,3 +57,12 @@ requests installation. Link-only stubs and hand-written headers do not establish
 - The headers cover what this project uses. A new system API (resource manager, PPS, Screen, ...) needs its
   declarations added in `sysroot/` and its symbols added to the stubs. Check new struct layouts against an
   SDP-built binary first.
+
+The default open build checks that every selected output is present and nonempty. `--programs` selects a
+space-separated subset; unknown names fail rather than producing a misleading success. Use
+`--output-dir build/<new-directory>` for a predictable output location; otherwise a unique directory is created. Without a reused
+`accessory_window`, the default build warns that its output is not a complete installer payload.
+
+CI checks the built binaries' ELF class and architecture and retains the experimental programs, resources, build log,
+SHA-256 hashes and `readelf` metadata as a workflow artifact for 14 days. The report supports comparison with an SDP
+build; it does not prove ABI compatibility or make the artifacts safe for vehicle deployment.
