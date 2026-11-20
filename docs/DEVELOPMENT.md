@@ -129,10 +129,10 @@ the offline TLS and protocol tests (simulated phone) in the VM.
 
 ## Continuous integration
 
-GitHub Actions runs on pushes and pull requests. It cross-builds the supported programs with the open QNX toolchain and
-compiles and runs the host-compatible H.264 framing, capture output, FIFO HTTP bridge and PNG packet tests on Linux,
-both normally and with AddressSanitizer and UndefinedBehaviorSanitizer. It also checks Python syntax and runs the TLS
-inspection and audio safety tests. Run the host checks locally with:
+GitHub Actions runs on pull requests and pushes to `main`. It cross-builds the supported programs with the open QNX
+toolchain and compiles and runs the host-compatible H.264 framing, capture output, FIFO HTTP bridge and PNG packet tests
+on Linux, both normally and with AddressSanitizer and UndefinedBehaviorSanitizer. It also checks Python syntax and runs
+the TLS inspection and audio safety tests. Run the host checks locally with:
 
 ```sh
 python3 scripts/test_host.py
