@@ -86,6 +86,9 @@ void PluginApp::triggerEvent(unsigned event) { events.push_back(event); }
 void PluginApp::updateModel(unsigned, int) {}
 void PluginApp::updateModel(unsigned, const TextID&) {}
 void PluginApp::cdsAddPropertyChangedEventHandler(BasicString<char>&, unsigned, const CdsDelegate&) { abort(); }
+void PluginApp::addHandler(unsigned, unsigned, const ActionDelegate&) { abort(); }
+bool PluginApp::start() { abort(); }
+bool Parcel::readBool(bool&) const { abort(); }
 TextID::TextID(unsigned) {}
 }
 
