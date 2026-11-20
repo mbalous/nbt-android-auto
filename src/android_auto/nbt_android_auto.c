@@ -203,6 +203,8 @@ struct capture_usb {
     struct usbd_pipe* pipe[2];
     unsigned char* dma[2];
     unsigned capacity[2];
+    unsigned out_max_packet;
+    int zlp_ok;
 };
 static unsigned removal_snapshot(long long* at_ms) {
     unsigned seen;
@@ -238,6 +240,29 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         return 0;
     }
     if(input)memcpy(data,c->dma[1],actual);
+    else if (c->zlp_ok && c->out_max_packet && (actual % c->out_max_packet) == 0) {
+        /* A packet-aligned bulk OUT transfer needs a ZLP so the phone's gadget read terminates. */
+        _Uint32t zlp_status = 0, zlp_actual = 0;
+        int zlp_completion_rc;
+        int zlp_rc = bulk_transfer_t(c->urb[0], c->pipe[0], c->dma[0], 0, 0,
+                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000);
+        if (zlp_rc != EOK || zlp_completion_rc != EOK ||
+            (zlp_status & USBD_URB_STATUS_MASK) != USBD_STATUS_CMP || zlp_actual != 0) {
+            const long long failed_at_ms = monotonic_ms();
+            long long removal_ms;
+            unsigned removal_seen = removal_snapshot(&removal_ms);
+            if (removal_seen || zlp_completion_rc == ENODEV) {
+                printf("AA_USB_OUT_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
+                       "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
+                       zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
+                       failed_at_ms, removal_seen, removal_ms);
+                return 0;
+            }
+            c->zlp_ok = 0;
+            printf("AA_USB_OUT_ZLP_DISABLED rc=%d status=%08x bytes=%u completion_rc=%d uptime_ms=%lld\n",
+                   zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc, failed_at_ms);
+        }
+    }
     *size=actual;return 1;
 }
 #endif
@@ -342,6 +367,8 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
         c.pipe[1] = input;
         c.capacity[0] = NBT_CAPTURE_MAX_TRANSFER;
         c.capacity[1] = small_rx && !strcmp(small_rx, "1") ? 16384U : NBT_CAPTURE_MAX_TRANSFER;
+        c.out_max_packet = (unsigned)bout->endpoint.wMaxPacketSize;
+        c.zlp_ok = 1;
         for (i = 0; i < 2; ++i) {
             c.urb[i] = usbd_alloc_urb(NULL);
             c.dma[i] = (unsigned char*)usbd_alloc(c.capacity[i]);
