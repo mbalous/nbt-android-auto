@@ -25,6 +25,7 @@
 #include <time.h>
 #include <dlfcn.h>
 #include "usb_wait.h"
+#include "usb_zlp_policy.h"
 #ifdef NBT_AA_CAPTURE
 #include "aa_video_capture.h"
 #endif
@@ -198,7 +199,6 @@ struct capture_usb {
     unsigned char* dma[2];
     unsigned capacity[2];
     unsigned out_max_packet;
-    int zlp_ok;
 };
 static unsigned removal_snapshot(long long* at_ms) {
     unsigned seen;
@@ -234,27 +234,22 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         return 0;
     }
     if(input)memcpy(data,c->dma[1],actual);
-    else if (c->zlp_ok && c->out_max_packet && (actual % c->out_max_packet) == 0) {
+    else if (usb_out_needs_zlp(actual, c->out_max_packet)) {
         /* A packet-aligned bulk OUT transfer needs a ZLP so the phone's gadget read terminates. */
         _Uint32t zlp_status = 0, zlp_actual = 0;
         int zlp_completion_rc;
         int zlp_rc = bulk_transfer_t(c->urb[0], c->pipe[0], c->dma[0], 0, 0,
                                      &zlp_status, &zlp_actual, &zlp_completion_rc, 2000);
-        if (zlp_rc != EOK || zlp_completion_rc != EOK ||
-            (zlp_status & USBD_URB_STATUS_MASK) != USBD_STATUS_CMP || zlp_actual != 0) {
+        if (!usb_zlp_succeeded(zlp_rc, zlp_completion_rc, zlp_status,
+                               USBD_URB_STATUS_MASK, USBD_STATUS_CMP, zlp_actual)) {
             const long long failed_at_ms = monotonic_ms();
             long long removal_ms;
             unsigned removal_seen = removal_snapshot(&removal_ms);
-            if (removal_seen || zlp_completion_rc == ENODEV) {
-                printf("AA_USB_OUT_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
-                       "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
-                       zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
-                       failed_at_ms, removal_seen, removal_ms);
-                return 0;
-            }
-            c->zlp_ok = 0;
-            printf("AA_USB_OUT_ZLP_DISABLED rc=%d status=%08x bytes=%u completion_rc=%d uptime_ms=%lld\n",
-                   zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc, failed_at_ms);
+            printf("AA_USB_OUT_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
+                   "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
+                   zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
+                   failed_at_ms, removal_seen, removal_ms);
+            return 0;
         }
     }
     *size=actual;return 1;
@@ -364,26 +359,25 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
         c.pipe[1] = input;
         c.capacity[0] = NBT_CAPTURE_MAX_TRANSFER;
         c.capacity[1] = small_rx && !strcmp(small_rx, "1") ? 16384U : NBT_CAPTURE_MAX_TRANSFER;
-        c.out_max_packet = (unsigned)bout->endpoint.wMaxPacketSize;
-        c.zlp_ok = 1;
+        c.out_max_packet = usb_packet_size((unsigned)bout->endpoint.wMaxPacketSize);
         for (i = 0; i < 2; ++i) {
             c.urb[i] = usbd_alloc_urb(NULL);
             c.dma[i] = (unsigned char*)usbd_alloc(c.capacity[i]);
         }
-        if(c.urb[0] && c.urb[1] && c.dma[0] && c.dma[1]) {
+        if(c.out_max_packet && c.urb[0] && c.urb[1] && c.dma[0] && c.dma[1]) {
             long long removal_ms;
             unsigned removal_seen;
             printf("AA_USB_CAPTURE_TARGET bus=%u device=%u generation=%u in=0x%02x out=0x%02x "
                    "read_size=%u in_max_packet=%u out_max_packet=%u uptime_ms=%lld\n",
                    (unsigned)instance->path,(unsigned)instance->devno,(unsigned)instance->generation,
                    (unsigned)bin->endpoint.bEndpointAddress,(unsigned)bout->endpoint.bEndpointAddress,c.capacity[1],
-                   (unsigned)bin->endpoint.wMaxPacketSize,(unsigned)bout->endpoint.wMaxPacketSize,monotonic_ms());
+                   usb_packet_size((unsigned)bin->endpoint.wMaxPacketSize),c.out_max_packet,monotonic_ms());
             result=nbt_video_capture_run(capture_transfer,&c,getenv("NBT_AA_CAPTURE_PREFIX"),c.capacity[1]);
             removal_seen = removal_snapshot(&removal_ms);
                 printf("AA_USB_CAPTURE_STOP uptime_ms=%lld removal_seen=%u removal_ms=%lld result=%d\n",
                        monotonic_ms(),removal_seen,removal_ms,result);
             } else {
-                puts("AA_USB_CAPTURE_START_FAILED cannot allocate transfer buffers");
+                puts("AA_USB_CAPTURE_START_FAILED cannot allocate transfer buffers or invalid OUT max packet size");
             }
         for(i=0;i<2;++i) {if(c.urb[i])usbd_free_urb(c.urb[i]);if(c.dma[i])usbd_free(c.dma[i]);}
         goto done;
