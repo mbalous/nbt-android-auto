@@ -180,7 +180,8 @@ runtime is missing, use a supported compiler and install its matching ASan/UBSan
 substitute for the sanitizer run.
 
 The open cross-build uses link-only stubs and excludes `accessory_window`; it does not establish ABI compatibility or
-vehicle safety. The complete SDP build and VM tests still require the toolchain and inputs described above; installer
+vehicle safety. See the [open versus SDP comparison](../toolchain/COMPARISON.md) for measured coverage and remaining
+validation. The complete SDP build and VM tests still require the toolchain and inputs described above; installer
 builds also require a release payload. MemorySanitizer is not enabled: it requires an instrumented toolchain and
 dependencies and would not cover the QNX target on hosted Linux.
 
