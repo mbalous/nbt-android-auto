@@ -129,9 +129,10 @@ the offline TLS and protocol tests (simulated phone) in the VM.
 
 ## Continuous integration
 
-GitHub Actions runs on pushes and pull requests. It compiles and runs the host-compatible H.264 framing, capture output,
-FIFO HTTP bridge and PNG packet tests on Linux, both normally and with AddressSanitizer and UndefinedBehaviorSanitizer.
-It also checks Python syntax and runs the TLS inspection and audio safety tests. Run these checks locally with:
+GitHub Actions runs on pushes and pull requests. It cross-builds the supported programs with the open QNX toolchain and
+compiles and runs the host-compatible H.264 framing, capture output, FIFO HTTP bridge and PNG packet tests on Linux,
+both normally and with AddressSanitizer and UndefinedBehaviorSanitizer. It also checks Python syntax and runs the TLS
+inspection and audio safety tests. Run the host checks locally with:
 
 ```sh
 python3 scripts/test_host.py
@@ -141,9 +142,10 @@ python3 -m compileall -q scripts installer tools experiments
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 ```
 
-These are host checks, not a QNX build or a car/phone test. The complete QNX build and VM tests still require the
-toolchain and inputs described above; installer builds also require a release payload. MemorySanitizer is not enabled:
-it requires an instrumented toolchain and dependencies and would not cover the QNX target on hosted Linux.
+The open cross-build uses link-only stubs and excludes `accessory_window`; it does not establish ABI compatibility or
+vehicle safety. The complete SDP build and VM tests still require the toolchain and inputs described above; installer
+builds also require a release payload. MemorySanitizer is not enabled: it requires an instrumented toolchain and
+dependencies and would not cover the QNX target on hosted Linux.
 
 ## Working on the car
 
