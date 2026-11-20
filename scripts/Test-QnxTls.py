@@ -1,8 +1,7 @@
 """Build pinned Mbed TLS and run a real TLS 1.2 memory-transport test on the VM.
 
-No vehicle access or system-library replacement. Requires Python cryptography
-(already available in .local/python-packages from the SSH setup). Generated
-private keys are disposable laboratory fixtures, saved only in ignored build/.
+No vehicle access or system-library replacement. Requires Python cryptography.
+Generated private keys are disposable laboratory fixtures, saved only in ignored build/.
 """
 import hashlib
 import io
