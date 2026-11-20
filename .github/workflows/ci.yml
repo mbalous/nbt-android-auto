@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -12,6 +13,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qnx-cross-build:
+    name: Open QNX cross-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch pinned NBT-AAD sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Sq00ky/Supra-iDrive6-Android-Auto
+          ref: 41975f269b065dbdbc77af9f568387cd22b9ed27
+          path: .local/reference-nbt-aad
+          persist-credentials: false
+      - name: Cache open QNX toolchain
+        id: qnx-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/qnx-open
+          key: qnx-open-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/**') }}
+      - name: Build open QNX toolchain
+        if: steps.qnx-cache.outputs.cache-hit != 'true'
+        run: toolchain/setup.sh
+      - name: Prepare container for cached toolchain
+        if: steps.qnx-cache.outputs.cache-hit == 'true'
+        run: |
+          mkdir -p build/toolchain-src
+          docker build --platform linux/amd64 -t qnx-open-host toolchain
+          toolchain/qnx-open i486-pc-nto-qnx6.5.0-g++ -O2 -o /repo/build/hello_nbt /repo/src/hello_nbt.cpp
+      - name: Cross-build supported programs
+        run: python3 scripts/build_open.py
+
   host-tests:
     name: Host C++ (${{ matrix.mode }})
     runs-on: ubuntu-24.04
