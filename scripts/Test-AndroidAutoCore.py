@@ -16,8 +16,10 @@ import tarfile
 import time
 import uuid
 
+from build_all import NBT_AAD_REVISION
+
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = "4328560e33d622243b68e8e1bb0766180fd954e5"
+REVISION = NBT_AAD_REVISION
 TESTS = {
     "test_sdr": ["src/sdr_builder.cpp"],
     "test_sdr_drop": ["src/sdr_builder.cpp"],

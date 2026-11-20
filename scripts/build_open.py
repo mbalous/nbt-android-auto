@@ -1,6 +1,6 @@
 """Build the head-unit programs with the open QNX 6.5.0 toolchain (no QNX SDP, no VM).
 
-Prepares the sources exactly like scripts/build_all.py (NBT-AAD at 4328560 + overlay + patches, Mbed TLS 3.6.7 with
+Prepares the sources exactly like scripts/build_all.py (pinned NBT-AAD + overlay + patches, Mbed TLS 3.6.7 with
 the QNX config) and runs scripts/build-open.sh in the toolchain container (toolchain/qnx-open). The toolchain must be
 built once first, see toolchain/README.md.
 
@@ -24,7 +24,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_all import PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_repo_sources  # noqa: E402
+from build_all import NBT_AAD_REVISION, PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_repo_sources  # noqa: E402
 
 OPEN_PROGRAMS = ("nbt_android_auto", "native_service", "decode_runner", "fifo_http", "nbt_knob",
                  "nbt_hwvideo", "nbt_cluster", "audioconn", "nbt_reset", "libNbtAndroidAuto.so")
@@ -53,7 +53,7 @@ def copy_built_programs(source, destination, selected):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
-                        help="NBT-AAD checkout at commit 4328560")
+                        help="NBT-AAD checkout at commit %s" % NBT_AAD_REVISION[:7])
     parser.add_argument("--programs", help="space-separated list (default: all supported programs including HMI plugin)")
     parser.add_argument("--reuse", type=Path,
                         help="installer payload folder (rt/, plugin/) to take programs from that were not built")

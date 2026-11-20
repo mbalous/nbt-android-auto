@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from build_all import NBT_AAD_REVISION
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -161,7 +163,7 @@ class FlashTests(unittest.TestCase):
             bin_dir = root / "bin"
             bin_dir.mkdir()
             commands = {
-                "git": 'case "$*" in *"rev-parse HEAD"*) echo 4328560e33d622243b68e8e1bb0766180fd954e5;; '
+                "git": f'case "$*" in *"rev-parse HEAD"*) echo {NBT_AAD_REVISION};; '
                        '*"rev-parse --abbrev-ref"*) echo test;; *"rev-parse --short"*) echo abc123;; esac\n',
                 "docker": "exit 0\n",
                 "python3": 'echo "programs: $FAKE_PROGRAMS"\n',

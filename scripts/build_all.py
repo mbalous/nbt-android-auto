@@ -1,7 +1,7 @@
 """Build every program of the installed package from this repository in the QNX 6.5.0 VM.
 
 What it does:
-  1. checks the NBT-AAD checkout (must be commit 4328560, unmodified)
+  1. checks the NBT-AAD checkout (must match NBT_AAD_REVISION, unmodified)
   2. downloads Mbed TLS 3.6.7 once (SHA-256 checked, cached in .local/), applies the legacy-UTCTime patch and the
      QNX configuration
   3. prepares the NBT-AAD core: upstream milestone-7 + scripts/aa_session_overlay.py + patches/*.patch + our
@@ -211,7 +211,7 @@ def main():
     parser.add_argument("--windows-openssh", action="store_true",
                         help="use Windows OpenSSH from WSL, converting local paths for ssh.exe/scp.exe")
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
-                        help="NBT-AAD checkout at commit 4328560")
+                        help="NBT-AAD checkout at commit %s" % NBT_AAD_REVISION[:7])
     parser.add_argument("--hmi-libs", default="$HOME/.nbt-build/hmi-libs",
                         help="folder IN THE VM with libAppFramework.A.so and libCoreFramework.A.so from your NBT")
     parser.add_argument("--compare", type=Path, help="installer payload folder to compare with (e.g. installer/payload)")

@@ -72,11 +72,13 @@ class SessionPackageTests(unittest.TestCase):
             class Nbt:
                 def __init__(self):
                     self.files = {installer.RT_DIR + "/previous-session": b"existing"}
+                    self.commands = []
 
                 def put(self, data, target, mode):
                     self.files[target] = data
 
                 def run(self, command, **kwargs):
+                    self.commands.append(command)
                     return 0, b"", b""
 
             nbt = Nbt()
@@ -85,14 +87,32 @@ class SessionPackageTests(unittest.TestCase):
                 installer.install(nbt, lambda _: None)
             self.assertEqual(nbt.files[session["target"]], b"fixture")
             self.assertEqual(nbt.files[installer.RT_DIR + "/previous-session"], b"existing")
+            restart_cmd = "'%s/restart.sh'" % installer.RT_DIR
+            self.assertNotIn(restart_cmd, nbt.commands)
+
+            nbt_restart = Nbt()
+            with mock.patch.object(installer, "payload_dir", return_value=out), mock.patch.object(
+                    installer, "preflight"):
+                installer.install(nbt_restart, lambda _: None, restart=True)
+            self.assertIn(restart_cmd, nbt_restart.commands)
+
+    def test_latest_build_selects_newest_completed_qnx_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "qnx-build-20261120T100000" / "programs").mkdir(parents=True)
+            (root / "qnx-build-20261120T110000" / "programs").mkdir(parents=True)
+            (root / "qnx-build-20261120T120000").mkdir(parents=True)  # incomplete (no programs/)
+            self.assertEqual(payload.latest_build(root), root / "qnx-build-20261120T110000")
+            with self.assertRaises(SystemExit):
+                payload.latest_build(root / "empty")
 
 
 @unittest.skipIf(installer.paramiko is None, "Paramiko is required for SSH tests")
 class InstallerHostKeyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server_key = installer.paramiko.RSAKey.generate(2048)
-        cls.other_key = installer.paramiko.RSAKey.generate(2048)
+        cls.server_key = installer.paramiko.ECDSAKey.generate()
+        cls.other_key = installer.paramiko.ECDSAKey.generate()
 
     @contextlib.contextmanager
     def server(self):

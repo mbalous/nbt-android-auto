@@ -11,10 +11,12 @@ import tempfile
 import time
 import unittest
 
+from build_all import NBT_AAD_REVISION
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/android_auto"
 REFERENCE = Path(os.environ.get("NBT_AAD_REFERENCE", ROOT / ".local/reference-nbt-aad")).resolve()
-REVISION = "4328560e33d622243b68e8e1bb0766180fd954e5"
+REVISION = NBT_AAD_REVISION
 
 
 def run(args, **kwargs):
