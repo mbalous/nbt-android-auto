@@ -40,6 +40,7 @@ def main():
         )
         tests = [
             ("src/android_auto/tests/test_usb_wait.cpp", [], ["-pthread"]),
+            ("src/android_auto/tests/test_usb_zlp_policy.cpp", [], []),
             ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")], []),
             ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
