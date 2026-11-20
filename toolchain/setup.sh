@@ -6,18 +6,14 @@ set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=$ROOT/build/toolchain-src
 mkdir -p "$SRC" "$ROOT/build/qnx-open"
-if command -v sha256sum >/dev/null 2>&1; then
-  verify_sha256() { sha256sum -c -; }
-elif command -v shasum >/dev/null 2>&1; then
-  verify_sha256() { shasum -a 256 -c -; }
-else
-  echo "SHA-256 verification requires sha256sum or shasum" >&2
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "SHA-256 verification requires sha256sum" >&2
   exit 1
 fi
 fetch() { # url sha256
   f=$SRC/$(basename "$1")
   [ -f "$f" ] || curl -fL --retry 3 -o "$f" "$1"
-  echo "$2  $f" | verify_sha256 >/dev/null || { echo "SHA-256 mismatch: $f"; exit 1; }
+  echo "$2  $f" | sha256sum -c - >/dev/null || { echo "SHA-256 mismatch: $f"; exit 1; }
 }
 fetch https://ftp.gnu.org/gnu/binutils/binutils-2.20.1.tar.bz2 71d37c96451333c5c0b84b170169fdcb138bbb27397dc06281905d9717c8ed64
 fetch https://ftp.gnu.org/gnu/gcc/gcc-4.4.2/gcc-4.4.2.tar.bz2 1126b6a7b585b3a178bfb7d559221779eb7eba12ce01bc9ca5896f6f9ee639de

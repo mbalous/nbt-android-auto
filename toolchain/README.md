@@ -13,8 +13,7 @@ comes from open sources or was written for this project:
 
 ## Setup (once, about 15–30 minutes)
 
-Needs Docker and either `sha256sum` or `shasum` for archive verification. On Apple Silicon it runs as amd64 under
-emulation.
+Needs Docker and `sha256sum` for archive verification. On Apple Silicon it runs as amd64 under emulation.
 
 ```sh
 toolchain/setup.sh
