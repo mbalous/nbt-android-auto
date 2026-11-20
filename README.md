@@ -18,22 +18,24 @@ It combines the `f6` audio and iDrive work with recovery, diagnostics, volume an
 keeping security-sensitive compatibility options and additional persistent logging opt-in.
 
 > **Status: experimental community prototype.** The original project was tested on a BMW F07 and Valinet's fork on a
-> BMW F30; **this merged version has not been tested in a car**. Host CI does not verify QNX ABI compatibility or
-> vehicle safety. NBT Evo is not supported. Read the [disclaimer](#disclaimer) first.
+> BMW F30. **This merged build has only had limited parked testing:** projection, iDrive knob input, and wired
+> audio worked after a cable swap. Host CI does not verify QNX ABI compatibility or vehicle safety. NBT Evo is not
+> supported. Read the [disclaimer](#disclaimer) first.
 
 🎬 **Earlier prototype:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
 
 See [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md) for the Valinet-derived functionality,
 [docs/WORKFLOW.md](docs/WORKFLOW.md) for build and debug commands, and
-[CAR-TEST-aa-dev.md](CAR-TEST-aa-dev.md) for a future vehicle-test checklist.
+[CAR-TEST-aa-dev.md](CAR-TEST-aa-dev.md) for parked test results and the vehicle-test checklist.
 
 ## Features
 
 - **Android Auto over USB**: wired Android Auto over the phone's USB connection; compatibility varies by phone.
 - **Video**: 800x480 through the stock Cinemo/VideoApp path. Earlier vehicle tests reported about 23 fps and 27 % CPU.
   Two picture modes: **wide** (full width) and **16:9** (sharper, iDrive split screen stays visible on the right).
-- **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back; BACK and tilts stay in Android Auto, also
-  with iDrive split screen on. MENU / MEDIA / COM / OPTION leave Android Auto, which keeps running in the background.
+- **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back. In split-screen mode, a right tilt can
+  also move iDrive's focus; the controller bridge observes events and cannot block iDrive from receiving them.
+  MENU / MEDIA / COM / OPTION leave Android Auto, which keeps running in the background.
   **NAV** brings Android Auto to the front; pressed again in Android Auto, it switches to Android Auto's sound (or
   play / pause).
 - **Android Auto sound in the car**: over USB, into main audio source `f6` (no separate audio cable). When the phone starts playing,
@@ -63,8 +65,12 @@ See [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md) for the Valinet-derived functio
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
+- Android Auto's split-screen mode overlays the left side of the display; it does not resize iDrive into the remaining
+  space. For an uninterrupted Android Auto picture, disable the factory split screen from iDrive's OPTION menu, then
+  select **Full width** in Android Auto's iDrive menu.
 - No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
-- The merged version has not yet been tested in a car.
+- The initial parked test ended shortly after projection started. A retest with a different cable worked, but full
+  vehicle validation remains pending.
 
 What changed between versions: [CHANGELOG.md](CHANGELOG.md).
 
@@ -207,6 +213,6 @@ Harman. BMW, iDrive and Android Auto are trademarks of their respective owners.
 
 You modify your car's head unit **at your own risk**. There is no warranty of any kind; the authors are not liable for
 damage to your car, head unit, phone or anything else, or for warranty claims you may lose. During development, wrong
-experiments crashed and restarted the head unit; this integration has not yet been tested in a car.
+experiments crashed and restarted the head unit. Limited parked testing does not establish vehicle safety.
 Do not operate the phone or the system while driving in a way that distracts you; follow your local
 traffic laws.

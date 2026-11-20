@@ -1,9 +1,12 @@
 """Check the session executable's path from build output to installation and launch."""
 import importlib.util
 import json
+import contextlib
 from pathlib import Path
 import re
+import socket
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -69,6 +72,96 @@ class SessionPackageTests(unittest.TestCase):
                 installer.install(nbt, lambda _: None)
             self.assertEqual(nbt.files[session["target"]], b"fixture")
             self.assertEqual(nbt.files[installer.RT_DIR + "/previous-session"], b"existing")
+
+
+@unittest.skipIf(installer.paramiko is None, "Paramiko is required for SSH tests")
+class InstallerHostKeyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server_key = installer.paramiko.RSAKey.generate(2048)
+        cls.other_key = installer.paramiko.RSAKey.generate(2048)
+
+    @contextlib.contextmanager
+    def server(self):
+        paramiko = installer.paramiko
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(10)
+        stop = threading.Event()
+
+        class Server(paramiko.ServerInterface):
+            def __init__(self):
+                self.auth_attempts = 0
+
+            def check_auth_password(self, username, password):
+                self.auth_attempts += 1
+                return paramiko.AUTH_SUCCESSFUL
+
+        server = Server()
+
+        def serve():
+            transport = None
+            try:
+                connection, _ = listener.accept()
+                transport = paramiko.Transport(connection)
+                transport.add_server_key(self.server_key)
+                transport.start_server(server=server)
+                stop.wait(10)
+            except (OSError, EOFError, paramiko.SSHException):
+                pass
+            finally:
+                if transport:
+                    transport.close()
+                listener.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        try:
+            yield listener.getsockname()[1], server
+        finally:
+            stop.set()
+            thread.join(12)
+            self.assertFalse(thread.is_alive())
+
+    def known_hosts(self, directory, port, key):
+        path = Path(directory) / "known_hosts"
+        path.write_text("[127.0.0.1]:%d %s %s\n" % (port, key.get_name(), key.get_base64()))
+        return path
+
+    def test_pinned_host_connects(self):
+        with tempfile.TemporaryDirectory() as directory, self.server() as (port, server):
+            path = self.known_hosts(directory, port, self.server_key)
+            nbt = installer.Nbt("127.0.0.1", port, "test", password="test", log=lambda _: None, known_hosts=path)
+            nbt.close()
+            self.assertEqual(server.auth_attempts, 1)
+
+    def test_unknown_and_changed_host_keys_fail_before_authentication(self):
+        for changed in (False, True):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory, self.server() as (port, server):
+                path = Path(directory) / "known_hosts"
+                if changed:
+                    self.known_hosts(directory, port, self.other_key)
+                else:
+                    path.write_text("")
+                with self.assertRaises(installer.InstallError):
+                    installer.Nbt("127.0.0.1", port, "test", password="test", log=lambda _: None,
+                                  known_hosts=path)
+                self.assertEqual(server.auth_attempts, 0)
+
+    def test_missing_known_hosts_fails_without_connecting(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+                installer.paramiko.SSHClient, "connect") as connect:
+            missing = Path(directory) / "missing"
+            with self.assertRaisesRegex(installer.InstallError, "known-hosts"):
+                installer.Nbt("127.0.0.1", 22, "test", known_hosts=missing)
+            connect.assert_not_called()
+
+    def test_default_still_accepts_unknown_key(self):
+        with self.server() as (port, server):
+            nbt = installer.Nbt("127.0.0.1", port, "test", password="test", log=lambda _: None)
+            nbt.close()
+            self.assertEqual(server.auth_attempts, 1)
 
 
 if __name__ == "__main__":

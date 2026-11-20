@@ -56,21 +56,48 @@ static int window_active(void) {
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static usbd_device_instance_t selected;
 static unsigned target_bus, target_device, found, gone;
+static long long removed_at_ms = -1;
 static unsigned target_vendor = 0x22d9, target_product = 0x2764;
+static long long monotonic_ms(void) {
+    struct timespec t;
+    if (clock_gettime(CLOCK_MONOTONIC, &t) != EOK) return -1;
+    return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
 static void inserted(struct usbd_connection* c, usbd_device_instance_t* d) {
     (void)c;
     if (d->path != target_bus || d->devno != target_device ||
         d->ident.vendor != target_vendor || d->ident.device != target_product || d->iface != 0) return;
     pthread_mutex_lock(&lock);
-    selected = *d; ++found;
+    if (!found) selected = *d;
+    ++found;
     pthread_mutex_unlock(&lock);
 }
 static void removed(struct usbd_connection* c, usbd_device_instance_t* d) {
     (void)c;
     pthread_mutex_lock(&lock);
-    if (found && d->path == selected.path && d->devno == selected.devno &&
-        d->generation == selected.generation) gone = 1;
+    if (found && !gone && d->path == selected.path && d->devno == selected.devno &&
+        d->generation == selected.generation) {
+        gone = 1;
+        removed_at_ms = monotonic_ms();
+    }
     pthread_mutex_unlock(&lock);
+}
+static int removal_selftest(void) {
+    usbd_device_instance_t first, replacement;
+    memset(&first, 0, sizeof(first));
+    first.path = target_bus = 1;
+    first.devno = target_device = 3;
+    first.ident.vendor = target_vendor;
+    first.ident.device = target_product;
+    first.generation = 1;
+    replacement = first;
+    replacement.generation = 2;
+    inserted(NULL, &first);
+    inserted(NULL, &replacement);
+    removed(NULL, &replacement);
+    if (found != 2 || gone || removed_at_ms != -1) return 0;
+    removed(NULL, &first);
+    return gone && removed_at_ms >= 0;
 }
 static int number(const char* text) {
     char* end; long n;
@@ -106,13 +133,14 @@ struct completion {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
     int done;
+    int rc;
     _Uint32t status, actual;
 };
 static void completed(struct usbd_urb* urb, struct usbd_pipe* pipe, void* context) {
     struct completion* c = (struct completion*)context;
     (void)pipe;
     pthread_mutex_lock(&c->mutex);
-    usbd_urb_status(urb, &c->status, &c->actual);
+    c->rc = usbd_urb_status(urb, &c->status, &c->actual);
     c->done = 1;
     pthread_cond_signal(&c->condition);
     pthread_mutex_unlock(&c->mutex);
@@ -133,7 +161,8 @@ static int await_completion(struct completion* c, unsigned milliseconds) {
 /* timeout_ms: usbd_io timeout of the transfer; the completion is awaited 1 s longer (2000 everywhere, except the session's
  * bulk IN reads, see capture_transfer) */
 static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
-                         unsigned size, int input, _Uint32t* status, _Uint32t* actual, unsigned timeout_ms) {
+                         unsigned size, int input, _Uint32t* status, _Uint32t* actual,
+                         int* completion_rc, unsigned timeout_ms) {
     struct completion c;
     int rc;
     memset(&c, 0, sizeof(c));
@@ -151,12 +180,15 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
         rc = ETIMEDOUT;
     }
     *status = c.status; *actual = c.actual;
+    *completion_rc = c.done ? c.rc : -1;
     pthread_cond_destroy(&c.condition); pthread_mutex_destroy(&c.mutex);
     return rc;
 }
 static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
-    return bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, 2000);
+    int completion_rc;
+    int rc = bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, &completion_rc, 2000);
+    return rc == EOK ? completion_rc : rc;
 }
 static void* signal_test_completion(void* context) {
     struct completion* c = (struct completion*)context;
@@ -170,19 +202,39 @@ struct capture_usb {
     struct usbd_urb* urb[2];
     struct usbd_pipe* pipe[2];
     unsigned char* dma[2];
+    unsigned capacity[2];
 };
+static unsigned removal_snapshot(long long* at_ms) {
+    unsigned seen;
+    pthread_mutex_lock(&lock);
+    seen = gone;
+    *at_ms = removed_at_ms;
+    pthread_mutex_unlock(&lock);
+    return seen;
+}
 static int capture_transfer(void* context,int input,unsigned char* data,unsigned* size) {
     struct capture_usb* c=(struct capture_usb*)context;
-    _Uint32t status=0,actual=0;int rc;
-    if(input<0 || input>1 || !*size || *size>65536)return 0;
+    _Uint32t status=0,actual=0;int rc,completion_rc;
+    if (input < 0 || input > 1 || !*size || *size > c->capacity[input]) {
+        printf("AA_USB_CAPTURE_BAD_REQUEST direction=%d requested=%u\n", input, *size);
+        return 0;
+    }
     if(!input)memcpy(c->dma[0],data,*size);
     /* Session reads (car 2026-11-17: a session ended with "Phone closed socket or read error" after 94 s of normal
      * streaming, no RX-timeout message): a bulk IN read gave up after 2 s without data, which ended the reader and the
      * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
      * logged with its USB status, so a real USB drop can be told from a pause. */
-    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,input?8000:2000);
-    if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size){
-        printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u\n",input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual);
+    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,
+                       &completion_rc,input?8000:2000);
+    if(rc!=EOK || completion_rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP ||
+       actual>*size || (!input && actual!=*size)){
+        const long long failed_at_ms = monotonic_ms();
+        long long removal_ms;
+        unsigned removal_seen = removal_snapshot(&removal_ms);
+        printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=%u "
+               "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
+               input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual,completion_rc,*size,
+               failed_at_ms,removal_seen,removal_ms);
         return 0;
     }
     if(input)memcpy(data,c->dma[1],actual);
@@ -283,10 +335,32 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
     if (usbd_open_pipe(device, bout, &output) != EOK) { output = NULL; goto done; }
 #ifdef NBT_AA_CAPTURE
     if(inspect_tls==4) {
-        struct capture_usb c;memset(&c,0,sizeof(c));c.pipe[0]=output;c.pipe[1]=input;
-        for(i=0;i<2;++i) {c.urb[i]=usbd_alloc_urb(NULL);c.dma[i]=(unsigned char*)usbd_alloc(65536);}
-        if(c.urb[0] && c.urb[1] && c.dma[0] && c.dma[1])
-            result=nbt_video_capture_run(capture_transfer,&c,getenv("NBT_AA_CAPTURE_PREFIX"));
+        struct capture_usb c;
+        const char* small_rx = getenv("NBT_AA_USB_RX_16K");
+        memset(&c, 0, sizeof(c));
+        c.pipe[0] = output;
+        c.pipe[1] = input;
+        c.capacity[0] = NBT_CAPTURE_MAX_TRANSFER;
+        c.capacity[1] = small_rx && !strcmp(small_rx, "1") ? 16384U : NBT_CAPTURE_MAX_TRANSFER;
+        for (i = 0; i < 2; ++i) {
+            c.urb[i] = usbd_alloc_urb(NULL);
+            c.dma[i] = (unsigned char*)usbd_alloc(c.capacity[i]);
+        }
+        if(c.urb[0] && c.urb[1] && c.dma[0] && c.dma[1]) {
+            long long removal_ms;
+            unsigned removal_seen;
+            printf("AA_USB_CAPTURE_TARGET bus=%u device=%u generation=%u in=0x%02x out=0x%02x "
+                   "read_size=%u in_max_packet=%u out_max_packet=%u uptime_ms=%lld\n",
+                   (unsigned)instance->path,(unsigned)instance->devno,(unsigned)instance->generation,
+                   (unsigned)bin->endpoint.bEndpointAddress,(unsigned)bout->endpoint.bEndpointAddress,c.capacity[1],
+                   (unsigned)bin->endpoint.wMaxPacketSize,(unsigned)bout->endpoint.wMaxPacketSize,monotonic_ms());
+            result=nbt_video_capture_run(capture_transfer,&c,getenv("NBT_AA_CAPTURE_PREFIX"),c.capacity[1]);
+            removal_seen = removal_snapshot(&removal_ms);
+                printf("AA_USB_CAPTURE_STOP uptime_ms=%lld removal_seen=%u removal_ms=%lld result=%d\n",
+                       monotonic_ms(),removal_seen,removal_ms,result);
+            } else {
+                puts("AA_USB_CAPTURE_START_FAILED cannot allocate transfer buffers");
+            }
         for(i=0;i<2;++i) {if(c.urb[i])usbd_free_urb(c.urb[i]);if(c.dma[i])usbd_free(c.dma[i]);}
         goto done;
     }
@@ -351,12 +425,13 @@ int main(int argc, char** argv) {
         b[11] = 1; if (version_response(b, sizeof(b), 0)) return 1; b[11] = 0;
         b[7] = 2; if (version_response(b, sizeof(b), 0)) return 1; b[7] = 1;
         b[3] = 9; if (version_response(b, sizeof(b), 0)) return 1;
-        if (!completion_selftest()) return 1;
+        if (!completion_selftest() || !removal_selftest()) return 1;
         memset(hello, 0, 44); hello[0] = 22; hello[1] = 3; hello[2] = 1;
         hello[4] = 39; hello[5] = 1; hello[8] = 35; hello[9] = 3; hello[10] = 3;
         if (!valid_hello(hello, 44) || valid_hello(hello, 43)) return 1;
         hello[5] = 2; if (valid_hello(hello, 44)) return 1;
-        puts("AA_VERSION_PARSER_OK truncated refused incompatible oversized completion-wait timeout"); return 0;
+        puts("AA_VERSION_PARSER_OK truncated refused incompatible oversized completion-wait timeout removal-generation");
+        return 0;
     }
     if (argc != 4 || ((switching = !strcmp(argv[1], "--switch-aa")) == 0 &&
 #ifdef NBT_AA_CAPTURE
