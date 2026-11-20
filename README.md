@@ -1,31 +1,38 @@
 # NBT Android Auto
 
-Wired Android Auto for the **original BMW NBT head unit** (CIC successor, 2013–2016, QNX 6.5 on x86), with no extra
-hardware. The phone's picture runs through the NBT's own hardware video path in full screen, you control it with the
-iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrument cluster.
+Wired Android Auto for the **original BMW NBT head unit** (CIC successor, 2013–2016, QNX 6.5 on x86), without an
+additional Android Auto interface. The phone's picture uses the NBT's video path, the iDrive controller handles input,
+and compatible instrument clusters can display navigation guidance.
 
-> **Status: community prototype.** The original project was tested on a BMW F07 (2014, OnePlus 7 Pro), and
-> [Valinet's fork](https://github.com/valinet/nbt-android-auto) on a BMW F30. This integration has not yet been
-> car-tested. NBT Evo is not supported. Read the [disclaimer](#disclaimer) first.
+This fork brings together [JayJay3071's original project](https://github.com/JayJay3071/nbt-android-auto),
+[Valinet's fork](https://github.com/valinet/nbt-android-auto) and
+[Adityadroid's fork](https://github.com/adityadroid/nbt-android-auto), preserving their commit histories. It combines
+the `f6` audio and iDrive work with recovery, diagnostics, volume and experimental build tooling, while keeping
+security-sensitive compatibility options and additional persistent logging opt-in.
 
-🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
+> **Status: experimental community prototype.** The original project was tested on a BMW F07 and Valinet's fork on a
+> BMW F30; **this merged version has not been tested in a car**. Host CI does not verify QNX ABI compatibility or
+> vehicle safety. NBT Evo is not supported. Read the [disclaimer](#disclaimer) first.
 
-Valinet's changes are described in [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md); build and debug commands are in
-[docs/WORKFLOW.md](docs/WORKFLOW.md). Valinet primarily tested with split screen on and a dedicated phone.
+🎬 **Earlier prototype:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
+
+See [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md) for the Valinet-derived functionality,
+[docs/WORKFLOW.md](docs/WORKFLOW.md) for build and debug commands, and
+[CAR-TEST-aa-dev.md](CAR-TEST-aa-dev.md) for a future vehicle-test checklist.
 
 ## Features
 
-- **Android Auto over USB**: any Android phone, no phone-specific configuration.
-- **Hardware video**: 800x480 in full screen through the stock Cinemo/VideoApp path, about 23 fps at about 27 % CPU.
+- **Android Auto over USB**: wired Android Auto over the phone's USB connection; compatibility varies by phone.
+- **Video**: 800x480 through the stock Cinemo/VideoApp path. Earlier vehicle tests reported about 23 fps and 27 % CPU.
   Two picture modes: **wide** (full width) and **16:9** (sharper, iDrive split screen stays visible on the right).
 - **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back; BACK and tilts stay in Android Auto, also
   with iDrive split screen on. MENU / MEDIA / COM / OPTION leave Android Auto, which keeps running in the background.
   **NAV** brings Android Auto to the front; pressed again in Android Auto, it switches to Android Auto's sound (or
   play / pause).
-- **Android Auto sound in the car**: over USB, into main audio source `f6` (no cable). When the phone starts playing,
+- **Android Auto sound in the car**: over USB, into main audio source `f6` (no separate audio cable). When the phone starts playing,
   the car switches to it; choosing another source in iDrive pauses the phone; NAV in Android Auto switches back and
-  resumes. iDrive's AUX stays factory. The earlier browser audio route remains available via `aa-audio`; `media-jack`
-  selects AUX and `bt-audio` selects Bluetooth. See [docs/WORKFLOW.md](docs/WORKFLOW.md).
+  resumes. The browser audio route is available via `aa-audio`, and `bt-audio` selects Bluetooth. Factory AUX remains
+  unchanged; the former `media-jack` mode is no longer supported. Software volume applies to both USB routes.
 - **Steering wheel**: roller up / down = next / previous track, roller push = play / pause, only while Android Auto's
   audio source plays. After the phone button the roller stays with iDrive's contact list for 4 s.
 - **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service as soon as the HMI boots and brings a
@@ -33,14 +40,19 @@ Valinet's changes are described in [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md);
 - **Parking assistant**: when it closes, Android Auto comes back if it was on screen before.
 - **Navigation in the instrument cluster** (6WB cluster) while Google Maps guides a route: arrow, distance bar, street
   name, motorway/road shields and lanes (lanes not yet confirmed with a real phone). BMW navigation takes priority when it guides itself.
+- **Now playing and recovery**: track metadata, session and video recovery, and configurable steering-wheel key mappings
+  from the integrated forks.
 - **Restart Android Auto** button on the Android Auto page restarts only the service (not the NBT) and saves a
   diagnostic snapshot first. **Restart system** reboots the head unit (also from a laptop: `scripts/nbt_reset.py`).
 
 ## Known limitations
 
 - Calls and the microphone still use Bluetooth. Details: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- The experimental wired car-microphone integration and BMW coding viewer are not included.
 - If the USB audio output fails, the next session falls back to Bluetooth. Prompts over other sources are disabled
   after a browser-route failure until reboot.
+- Software volume on `f6` may be attenuated again by the car; use `aa-volume-off` if necessary. Neither this behavior
+  nor the merged service's advisory locking has been vehicle-tested.
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
@@ -78,9 +90,12 @@ Unlocking SSH changes the head unit's configuration. As with everything here, yo
 If upgrading from a version before the executable rename, **uninstall the previous package first** using the installer,
 then restart iDrive before installing the new package. The installer does not migrate old files automatically.
 
-1. Download the installer from [Releases](../../releases): `NBT-AndroidAuto-Installer.exe` (Windows) or the macOS app.
-   Alternatively run the Python version: `pip install "paramiko>=3.4,<4"`, then `python installer/nbt_aa_installer.py`
-   with the `payload/` folder from the release next to it.
+Prebuilt installers may be published on [Releases](../../releases); check that the release actually contains the version
+you want. Older upstream or fork releases do not contain this merged version. To build a payload from this branch, see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); no prebuilt release of the merged version is currently available.
+
+1. Use a matching release installer if available, or build a payload and run the Python installer:
+   `pip install "paramiko>=3.4,<4"`, then `python installer/nbt_aa_installer.py` with the `payload/` folder next to it.
 2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update**.
 3. Restart the iDrive.
 4. Plug in the phone and choose **Multimedia → Android Auto**.
@@ -92,6 +107,24 @@ never stores your password. Details: [installer/README.md](installer/README.md).
 **Unsigned binaries:** the Windows .exe is not code-signed yet, so Windows 11 *Smart App Control* may block it. Use the
 Python version in that case; please do not switch off Smart App Control for this. The macOS app is not notarized: open
 it with right-click → Open.
+
+## Configuration and diagnostics
+
+Optional switches are files in `/var/opt/hmi/data/rw/NbtAndroidAutoRT/`. Changes take effect after restarting the
+Android Auto service unless noted otherwise.
+
+| File | Effect |
+|---|---|
+| `aa-audio` | Use the browser USB audio route instead of the default `f6` route. |
+| `bt-audio` | Use Bluetooth audio instead of USB audio. |
+| `aa-volume-off` | Disable software media-volume adjustment. |
+| `prompts-off` | Disable prompts over other car audio sources. |
+| `tls-allow-date-errors` | Allow expired or not-yet-valid phone certificates. Strict date validation is the default; other certificate checks remain enforced. |
+| `incident-logging` | Enable bounded persistent incident snapshots and event logs. |
+| `extended-log-history` | Enable bounded persistent boot-log history, starting at the next head-unit boot. |
+
+Baseline logs and restart snapshots remain enabled without these flags. Logs can contain phone and vehicle details;
+review them before sharing. More switches and a future test checklist are in [CAR-TEST-aa-dev.md](CAR-TEST-aa-dev.md).
 
 ## Reporting problems
 
@@ -129,6 +162,7 @@ are kept in [docs/history/](docs/history/) for reference.
 | `scripts/` | Build, test and diagnostic scripts (VM and car) |
 | `tools/` | SSH session helper for development on the car |
 | `patches/` | Small patches to the upstream NBT-AAD core |
+| `toolchain/` | Experimental open QNX toolchain, headers and link-only stubs |
 | `docs/` | Technical documentation; `docs/history/` = development log |
 | `experiments/` | Past experiments, not part of the product (some crashed the head unit), kept for reference |
 
@@ -137,19 +171,21 @@ files and shows how they work together.
 
 ## Contributing
 
-Help is very welcome, especially for **Android Auto audio** and other NBT software levels and cars. Everything can be
-built from this repository with one command in a QNX 6.5.0 VM (`scripts/build_all.py`). Start with
-[CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Help is welcome, especially with testing on different phones, NBT software levels and cars. The QNX VM build uses
+`scripts/build_all.py` and requires the inputs described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+An [open toolchain](toolchain/README.md) is also available but is experimental and reuses an existing
+`accessory_window` binary. `./flash-aa-open.sh` builds only by default; installation requires `--install` or
+`--install-only`. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support and contact
 
-If this project is useful to you, donations are very welcome via **PayPal** to **androidauto.nbt@proton.me**.
-The same address is also the place to reach me with questions or suggestions.
+Please use this fork's [issues](../../issues) for questions, suggestions and bug reports.
 
 ## Credits and license
 
-Parts of the Android Auto core and the controller code come from **NBT-AAD** by nanaisu
-([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)). Thank you!
+Thank you to JayJay3071, Valinet and Adityadroid for their work on the original project and forks. Parts of the Android
+Auto core and controller code come from **NBT-AAD** by nanaisu
+([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)).
 
 This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for private and other
 noncommercial use, **no commercial use** (for example selling it pre-installed). Third-party notices are listed in
