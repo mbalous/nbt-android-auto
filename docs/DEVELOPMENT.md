@@ -50,6 +50,9 @@ Helper scripts for a Windows host:
   smoke test.
 
 The old QNX OpenSSH 5.2 needs `HostKeyAlgorithms +ssh-rsa` and `MACs +hmac-sha1` (only for this host).
+The PowerShell bootstrap helpers and older VM protocol-test scripts are restricted to `192.168.56.10`; do not
+weaken their target checks for a different VM. Configure its actual address in the SSH alias and independently
+verify its host key. The build VM is not the car.
 
 Environment for every build shell in the VM:
 
@@ -85,12 +88,29 @@ Which program is built from which files: [src/README.md](../src/README.md).
 python scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
 ```
 
+From WSL, if Linux OpenSSH fails with `error in libcrypto` while verifying the VM's legacy `ssh-rsa` host key,
+use Windows OpenSSH instead, without disabling host-key verification:
+
+```sh
+python3 scripts/build_all.py --windows-openssh --host qnx-build
+```
+
+This uses `/mnt/c/Windows/System32/OpenSSH/{ssh,scp}.exe` and `wslpath` to convert local paths, including the
+pinned `known_hosts` file. The SSH configuration must name a Windows-accessible key. For a checkout or worktree
+without its own `.local` inputs, pass `--ssh-config`, `--known-hosts`, and `--nbt-aad` pointing to the existing
+files and pinned reference checkout. If the key path is missing or trust fails, fix the VM configuration; do not
+disable host-key checks. A successful VM build does not install or test anything on the car.
+
 `--identity <key>` if your SSH config does not name the VM key; `--compare` is optional (an installer payload, for
 example unpacked from a release ZIP). The run takes about 5 minutes (most of it Mbed TLS) and leaves:
 
-- `build/qnx-build-<time>/programs/` - all programs for the head unit, plus `boot.sh` / `restart.sh`
-- `build/qnx-build-<time>/plugin-resources/` - plugin XML, manifest and the text/image ZIPs
-- `build/qnx-build-<time>/build.log` - the full VM log with the comparison table
+- `build/qnx-build-<time>-<id>/programs/` - all programs for the head unit, plus `boot.sh` / `restart.sh`
+- `build/qnx-build-<time>-<id>/plugin-resources/` - plugin XML, manifest and the text/image ZIPs
+- `build/qnx-build-<time>-<id>/build.log` - the full VM log with the comparison table
+
+Each build creates a unique VM directory. An upload or artifact download failure retains that directory and reports
+its path so the failure can be investigated; the program does not treat an interrupted download as a successful build.
+If the plugin was skipped, install the two HMI libraries on the VM and rebuild before packaging.
 
 What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compiles (in the VM):
 
@@ -141,6 +161,10 @@ python3 -m pip install cryptography==44.0.3
 python3 -m compileall -q scripts installer tools experiments
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 ```
+
+Run the Python checks in the environment where `cryptography` is installed. If the sanitizer build fails because its
+runtime is missing, use a supported compiler and install its matching ASan/UBSan runtimes; a normal host test is not a
+substitute for the sanitizer run.
 
 The open cross-build uses link-only stubs and excludes `accessory_window`; it does not establish ABI compatibility or
 vehicle safety. The complete SDP build and VM tests still require the toolchain and inputs described above; installer

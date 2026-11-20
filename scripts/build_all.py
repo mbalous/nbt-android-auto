@@ -27,6 +27,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 from aa_session_overlay import harden_session
@@ -149,12 +150,66 @@ def add_expected(archive, payload):
             archive.add("expected/" + name, path.read_bytes())
 
 
+class OpenSSH:
+    def __init__(self, windows=False):
+        self.windows = windows
+        prefix = "/mnt/c/Windows/System32/OpenSSH/"
+        self.ssh = prefix + "ssh.exe" if windows else "ssh"
+        self.scp = prefix + "scp.exe" if windows else "scp"
+        if windows and (not Path(self.ssh).is_file() or not Path(self.scp).is_file() or not shutil.which("wslpath")):
+            raise SystemExit("--windows-openssh requires WSL, wslpath, and Windows OpenSSH ssh.exe/scp.exe")
+
+    def local_path(self, path, forward_slashes=False):
+        if not self.windows:
+            return Path(path).as_posix() if forward_slashes else str(path)
+        converted = subprocess.check_output(["wslpath", "-w", str(Path(path).resolve())], text=True).strip()
+        return converted.replace("\\", "/") if forward_slashes else converted
+
+    def options(self, config, known_hosts, identity):
+        options = []
+        if config.is_file():
+            options += ["-F", self.local_path(config)]
+        if known_hosts.is_file():
+            options += ["-o", "UserKnownHostsFile=" + self.local_path(known_hosts, forward_slashes=True)]
+        if identity:
+            options += ["-i", self.local_path(identity)]
+        return options + ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+
+    def copy(self, options, source, destination):
+        source = self.local_path(source) if isinstance(source, Path) else source
+        destination = self.local_path(destination) if isinstance(destination, Path) else destination
+        return [self.scp, "-O", "-q", *options, source, destination]
+
+
+def fetch_programs(client, options, host, folder, programs, log):
+    for name in PROGRAMS:
+        if name == "libNbtAndroidAuto.so" and "SKIPPED: no libAppFramework.A.so" in log:
+            print("not built:", name)
+            continue
+        fetched = subprocess.run(client.copy(options, "%s:%s/out/%s" % (host, folder, name), programs / name),
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if fetched.returncode != 0:
+            raise SystemExit("Failed to fetch %s; VM build files retained at %s:\n%s" %
+                             (name, folder, fetched.stdout.decode(errors="replace")))
+        if not (programs / name).is_file() or (programs / name).stat().st_size == 0:
+            raise SystemExit("Fetched %s is missing or empty; VM build files retained at %s" % (name, folder))
+
+
+def create_vm_build_directory(remote, folder):
+    created = remote("umask 077; mkdir -p .nbt-build && mkdir " + folder)
+    if created.returncode != 0:
+        raise SystemExit("Cannot create unique VM build directory %s:\n%s" %
+                         (folder, created.stdout.decode(errors="replace")))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="qnx-build", help="ssh host of the QNX VM (default: qnx-build)")
     parser.add_argument("--ssh-config", type=Path, default=ROOT / ".local/ssh_config")
     parser.add_argument("--known-hosts", type=Path, default=ROOT / ".local/known_hosts")
     parser.add_argument("--identity", type=Path, help="ssh private key for the VM (if not set in the ssh config)")
+    parser.add_argument("--windows-openssh", action="store_true",
+                        help="use Windows OpenSSH from WSL, converting local paths for ssh.exe/scp.exe")
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
                         help="NBT-AAD checkout at commit 41975f2")
     parser.add_argument("--hmi-libs", default="$HOME/.nbt-build/hmi-libs",
@@ -162,24 +217,18 @@ def main():
     parser.add_argument("--compare", type=Path, help="installer payload folder to compare with (e.g. installer/payload)")
     args = parser.parse_args()
 
-    ssh = []
-    if args.ssh_config.is_file():
-        ssh += ["-F", str(args.ssh_config)]
-    if args.known_hosts.is_file():
-        ssh += ["-o", "UserKnownHostsFile=" + str(args.known_hosts)]
-    if args.identity:
-        ssh += ["-i", str(args.identity)]
-    ssh += ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+    client = OpenSSH(args.windows_openssh)
+    ssh = client.options(args.ssh_config, args.known_hosts, args.identity)
 
     def remote(command, timeout=60):
-        return subprocess.run(["ssh", *ssh, args.host, command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        return subprocess.run([client.ssh, *ssh, args.host, command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               timeout=timeout)
 
     probe = remote('test "`uname -s`" = QNX && test "`uname -r`" = 6.5.0 && test "`id -u`" != 0 && echo VM_OK')
-    if b"VM_OK" not in probe.stdout:
+    if probe.returncode != 0 or b"VM_OK" not in probe.stdout:
         raise SystemExit("The host is not a QNX 6.5.0 VM with a non-root user:\n" + probe.stdout.decode(errors="replace"))
 
-    run_id = "qnx-build-" + time.strftime("%Y%m%dT%H%M%S")
+    run_id = "qnx-build-" + time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8]
     out = ROOT / "build" / run_id
     out.mkdir(parents=True)
     archive_path = out / "source.tar"
@@ -192,28 +241,31 @@ def main():
     archive.close()
 
     folder = ".nbt-build/" + run_id
-    remote("umask 077; mkdir -p " + folder)
-    subprocess.run(["scp", "-O", "-q", *ssh, str(archive_path), "%s:%s/source.tar" % (args.host, folder)],
-                   check=True, timeout=300)
+    create_vm_build_directory(remote, folder)
+    try:
+        subprocess.run(client.copy(ssh, archive_path, "%s:%s/source.tar" % (args.host, folder)), check=True, timeout=300)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("Upload failed; VM build directory retained at %s" % folder) from error
     print("building in the VM:", folder, flush=True)
     result = remote("cd %s && tar xf source.tar && HMI_LIBS=%s sh build-qnx.sh" % (folder, args.hmi_libs), timeout=1800)
     log = result.stdout.decode(errors="replace")
     (out / "build.log").write_text(log, encoding="utf-8")
     print(log[log.find("== nbt_android_auto"):] if "== nbt_android_auto" in log else log[-3000:])
     if result.returncode != 0 or "BUILD_QNX_DONE" not in log:
-        remote("rm -rf " + folder)   # the log is kept locally; a full VM disk fails the next link (user 2026-11-12)
+        cleaned = remote("rm -rf " + folder)
+        if cleaned.returncode != 0:
+            print("VM cleanup failed for %s: %s" % (folder, cleaned.stdout.decode(errors="replace")), file=sys.stderr)
         raise SystemExit("VM build failed, full log: " + str(out / "build.log"))
 
     programs = out / "programs"
     programs.mkdir()
-    for name in PROGRAMS:
-        fetched = subprocess.run(["scp", "-O", "-q", *ssh, "%s:%s/out/%s" % (args.host, folder, name), str(programs / name)],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if fetched.returncode != 0:
-            print("not built:", name)
+    fetch_programs(client, ssh, args.host, folder, programs, log)
     # every run made a new folder in the VM and nothing removed it: the VM disk filled up ("final link failed: Bad file
     # descriptor", user 2026-11-12). The programs are fetched now, so the folder goes.
-    remote("rm -rf " + folder)
+    cleaned = remote("rm -rf " + folder)
+    if cleaned.returncode != 0:
+        raise SystemExit("VM build succeeded but cleanup failed for %s:\n%s" %
+                         (folder, cleaned.stdout.decode(errors="replace")))
     resources = out / "plugin-resources"
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")

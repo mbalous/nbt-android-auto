@@ -31,6 +31,9 @@ git am "%USERPROFILE%\Downloads\<patch file>.patch"
 python scripts\build_all.py
 ```
 
+For WSL builds using Windows OpenSSH, run `python3 scripts/build_all.py --windows-openssh` instead; see the
+[QNX build guide](DEVELOPMENT.md#every-build) for pinned host keys and paths.
+
 3. Package, with the newest build folder name in place of `<newest>`:
 ```
 python installer\make_payload.py --built build\qnx-build-<newest> --pem-dir .local\pem
