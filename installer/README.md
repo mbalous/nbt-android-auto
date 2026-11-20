@@ -17,6 +17,9 @@ Enabling SSH changes the device configuration. As with everything here, you do i
 
 ## Usage
 
+If upgrading from a version before the executable rename, uninstall the previous package first and restart iDrive.
+The installer does not migrate old files automatically.
+
 1. Connect the laptop to the car with an ENET cable and switch on the ignition. The usual NBT address is `169.254.199.99`.
 2. Start the installer:
    - Windows: `NBT-AndroidAuto-Installer.exe`
@@ -70,7 +73,7 @@ The `payload/` folder must be next to the script.
 
 ## For developers
 
-- `python installer/make_payload.py [version]` collects the car-tested build files in `installer/payload/`.
+- `python installer/make_payload.py [version] --built build/qnx-build-<time>` collects the build files in `installer/payload/`.
   `manifest.json` contains the SHA-256 for each file. The folder is not checked in.
 - `installer/build_windows.ps1` builds the Windows executable. `installer/build_mac.sh` builds the app on a Mac.
 - For testing in a QNX VM, the hidden `--key <ssh-key>` and `--root <test-directory>` options install under a test

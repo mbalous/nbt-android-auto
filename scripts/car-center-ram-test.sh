@@ -25,8 +25,8 @@ if test "$MODE" = on; then touch $R/center800; fi
 if test "$MODE" = ana; then touch $R/anamorph; fi
 if test "$MODE" = split; then touch $R/split800; fi
 # optional new phone-side binary (anamorph needs the pixel aspect ratio in the video configuration)
-if test -s $T/oneplus_native; then
-  cp $T/oneplus_native $R/oneplus_native.tmp && chmod 700 $R/oneplus_native.tmp && mv $R/oneplus_native.tmp $R/oneplus_native && cmp -s $T/oneplus_native $R/oneplus_native && echo "ok oneplus_native"
+if test -s $T/nbt_android_auto; then
+  cp $T/nbt_android_auto $R/nbt_android_auto.tmp && chmod 700 $R/nbt_android_auto.tmp && mv $R/nbt_android_auto.tmp $R/nbt_android_auto && cmp -s $T/nbt_android_auto $R/nbt_android_auto && echo "ok nbt_android_auto"
 fi
 cd $R
 NBT_VID_DPI=$DPI NBT_VID_INSETS=0,180,0,0 LD_LIBRARY_PATH=/opt/mm/lib:/opt/mm/lib/cinemo:/lib:/usr/lib ./native_service </dev/null >/dev/null 2>&1 &

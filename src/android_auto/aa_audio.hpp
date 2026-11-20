@@ -1,4 +1,4 @@
-// aa_audio: optional Android Auto sound over the Android Auto connection (part of oneplus_native).
+// aa_audio: optional Android Auto sound over the Android Auto connection (part of nbt_android_auto).
 //
 // Active when NBT_AUDIO_MODE=browser (native_service's default since 2026-11-15; bt-audio switches back). Then the NBT-AAD core's
 // BrowserAudio (upstream milestone-7/src/audio/browser_audio.*) takes the phone's media (ch 9), guidance (ch 8) and

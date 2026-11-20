@@ -14,10 +14,10 @@ ls -l $P 2>&1 | sed 20q
 if test -e $R/service.lock; then echo 'SERVICE LOCK EXISTS - not starting'; ls -l $R; exit 2; fi
 mkdir -p $R
 chmod 700 $R
-cp $P/native_frames $P/fifo_http $P/decode_runner $P/accessory_window $P/oneplus_native $P/cert.pem $P/key.pem $P/ca.pem $R/
+cp $P/native_frames $P/fifo_http $P/decode_runner $P/accessory_window $P/nbt_android_auto $P/cert.pem $P/key.pem $P/ca.pem $R/
 cp /fs/ram3/nbt-video-test/native_service_live $R/native_service
 cp /fs/ram3/nbt-video-test/nbt_live_file $R/nbt_live_file
-chmod 700 $R/native_service $R/nbt_live_file $R/native_frames $R/fifo_http $R/decode_runner $R/accessory_window $R/oneplus_native
+chmod 700 $R/native_service $R/nbt_live_file $R/native_frames $R/fifo_http $R/decode_runner $R/accessory_window $R/nbt_android_auto
 chmod 600 $R/*.pem
 echo "$SHADOW" > $R/shadow.path
 cd $R
@@ -31,5 +31,5 @@ sed 10q live_file.log
 echo '=== shadow visible (size 2147483647 means the overlay is attached)'
 ls -l "$SHADOW"
 echo '=== processes'
-pidin ar | grep -e native_service -e nbt_live_file -e accessory_window -e oneplus_native | grep -v grep
+pidin ar | grep -e native_service -e nbt_live_file -e accessory_window -e nbt_android_auto | grep -v grep
 echo '=== END'

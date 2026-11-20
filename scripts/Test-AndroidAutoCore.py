@@ -91,7 +91,7 @@ def main():
         collect("src/" + name + ".cpp")
     files["LICENSE.md"] = (reference / "LICENSE.md").read_bytes()
     diagnostics = {"usb_inventory.c": "-lusbdi", "tls_capabilities.cpp": "", "connection_inventory.cpp": "",
-                   "accessory_window.c": "", "oneplus_aoa.c": "-lusbdi"}
+                   "accessory_window.c": "", "nbt_android_auto.c": "-lusbdi"}
     for source in diagnostics:
         files["diagnostics/" + source] = (ROOT / "src/android_auto" / source).read_bytes()
 
@@ -117,13 +117,13 @@ def main():
             commands += ['  if [ "$(id -u)" != 0 ]; then',
                          '    echo PROBE:accessory_window:ROOT_REQUIRED', '  else',
                          '    ./bin/accessory_window', '    echo PROBE:accessory_window:$?', '  fi']
-        elif name == "oneplus_aoa":
-            commands += ['  ./bin/oneplus_aoa --selftest', '  test $? -eq 0 || exit 1',
-                         '  ./bin/oneplus_aoa --switch-aa 0 2', '  test $? -eq 3 || exit 1',
-                         '  ./bin/oneplus_aoa --version 0 2', '  test $? -eq 3 || exit 1',
-                         '  ./bin/oneplus_aoa --tls-inspect 0 2', '  test $? -eq 3 || exit 1',
-                         '  ./bin/oneplus_aoa --query invalid 2', '  test $? -eq 2 || exit 1',
-                         '  echo PROBE:oneplus_aoa:GUARDS_OK']
+        elif name == "nbt_android_auto":
+            commands += ['  ./bin/nbt_android_auto --selftest', '  test $? -eq 0 || exit 1',
+                         '  ./bin/nbt_android_auto --switch-aa 0 2', '  test $? -eq 3 || exit 1',
+                         '  ./bin/nbt_android_auto --version 0 2', '  test $? -eq 3 || exit 1',
+                         '  ./bin/nbt_android_auto --tls-inspect 0 2', '  test $? -eq 3 || exit 1',
+                         '  ./bin/nbt_android_auto --query invalid 2', '  test $? -eq 2 || exit 1',
+                         '  echo PROBE:nbt_android_auto:GUARDS_OK']
         else:
             commands += [f"  ./bin/{name}", f'  echo PROBE:{name}:$?']
         commands += ["else",
@@ -160,7 +160,7 @@ def main():
     print(json.dumps(summary, indent=2), flush=True)
     print("Evidence:", out, flush=True)
     # Fetch only our diagnostic binaries, never the reference daemon.
-    for name in ["usb_inventory", "tls_capabilities", "connection_inventory", "accessory_window", "oneplus_aoa"]:
+    for name in ["usb_inventory", "tls_capabilities", "connection_inventory", "accessory_window", "nbt_android_auto"]:
         if name not in probes or probes[name] == "BUILD_FAILED":
             continue
         run(["scp", "-O", *opts, "qnx-build:" + remote + "/bin/" + name, str(out / name)], timeout=30)
@@ -171,7 +171,7 @@ def main():
               len(results) == len(TESTS) and all(v == "0" for v in results.values()) and
               probes.get("connection_inventory") == "0" and
               probes.get("accessory_window") in ("0", "ROOT_REQUIRED") and
-              probes.get("oneplus_aoa") == "GUARDS_OK")
+              probes.get("nbt_android_auto") == "GUARDS_OK")
     return 0 if passed else 1
 
 

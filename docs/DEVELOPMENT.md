@@ -94,7 +94,7 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 |---|---|
 | Mbed TLS 3.6.7 | release archive + `scripts/mbedtls_legacy_time.py` (old phone certificate dates) + QNX config (no AES-NI/ASM/PadLock), static libraries |
 | NBT-AAD core `libnbt_aa_core.a` | upstream `milestone-7/src` + `scripts/aa_session_overlay.py` + `patches/*.patch` + our `aa_cryptor_mbedtls.cpp` (Mbed TLS instead of OpenSSL) |
-| `oneplus_native` | `oneplus_aoa.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp`, `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
+| `nbt_android_auto` | `nbt_android_auto.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp`, `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
 | `native_service` | C, `-O2` |
 | `accessory_window` | C, no optimisation |
 | `decode_runner` | C++, `-O2` |
@@ -103,7 +103,8 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 | `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
 
 **Verified on 2026-11-11** against installer 2026.11.10.2: `native_service`, `decode_runner`, `fifo_http`,
-`accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` are byte-identical, `oneplus_native` is
+`accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` were byte-identical; the session executable,
+which had a different name at the time, was
 identical apart from the symbol table (file names). `nbt_hwvideo` differs on purpose: the source has one more
 read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped program.
 
@@ -111,8 +112,7 @@ read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped prog
 
 1. `python installer/make_payload.py <version> --built build/qnx-build-<time> --pem-dir <folder with cert.pem, key.pem, ca.pem>`
    collects everything into `installer/payload/` and writes `manifest.json` with SHA-256 per file. The PEM files are
-   the public NBT-AAD head-unit identity; take them from `rt/` of a release payload. (Without `--built` the script
-   uses the original developer's private build folders.)
+   the public NBT-AAD head-unit identity; take them from `rt/` of a release payload. `--built` is required.
 2. `installer/build_windows.ps1` builds the Windows .exe, `installer/build_mac.sh` the macOS app (on a Mac).
    paramiko must stay below 4 (the NBT only offers `ssh-rsa`).
 3. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install

@@ -11,7 +11,7 @@ $T = '/fs/ram3/nbt-video-test'
 & $py $req "mkdir -p $T; chmod 700 $T; ls -l $T" --timeout 20
 if ($LASTEXITCODE -ne 0) { throw 'mkdir failed' }
 # local name -> name on the car (native_service is started by car-wal-start.sh as native_service_live)
-$files = [ordered]@{ 'native_service' = 'native_service_live'; 'oneplus_native' = 'oneplus_native';
+$files = [ordered]@{ 'native_service' = 'native_service_live'; 'nbt_android_auto' = 'nbt_android_auto';
                      'nbt_knob' = 'nbt_knob'; 'nbt_hwvideo' = 'nbt_hwvideo'; 'decode_runner' = 'decode_runner' }
 foreach ($k in $files.Keys) {
     $local = Join-Path $src $k

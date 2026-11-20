@@ -1,5 +1,5 @@
-/* oneplus_aoa: the main() of the oneplus_native program (the name is historical: it started as a probe for the
- * developer's OnePlus 7 Pro; it works with any Android phone now). Bounded: one given bus/device, never a device-wide scan.
+/* nbt_android_auto: USB/AOA entry point for the Android Auto session.
+ * Bounded: one given bus/device, never a device-wide scan.
  * native_service calls it as --switch-aa <bus> <device> and --capture-video <bus> <device> (the live session, built
  * with -DNBT_AA_CAPTURE, see aa_video_capture.cpp).
  * Control-transfer implementation adapted from NBT-AAD usb_direct.cpp.
@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
         (inspecting = !strcmp(argv[1], "--tls-inspect")) == 0 &&
         (versioning = !strcmp(argv[1], "--version")) == 0 && strcmp(argv[1], "--query")) ||
         (bus = number(argv[2])) < 0 || (dev = number(argv[3])) < 1) {
-        fputs("Usage: oneplus_aoa --query|--switch-aa|--version|--tls-inspect bus device\n", stderr); return 2;
+        fputs("Usage: nbt_android_auto --query|--switch-aa|--version|--tls-inspect bus device\n", stderr); return 2;
     }
     alarm(inspecting==4 ? (getenv("NBT_AA_LIVE_FIFO") ? 0 : 75) : 20); setvbuf(stdout, NULL, _IOLBF, 0);
     if ((switching || versioning || inspecting) && !window_active()) {

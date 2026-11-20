@@ -144,7 +144,7 @@ static int endedAdd(int value) {
     prepare_audio_sources(files)
     files["test_tls_memory.cpp"] = (ROOT / "src/android_auto/test_tls_memory.cpp").read_bytes()
     files["test_session_protocol.cpp"] = (ROOT / "src/android_auto/test_session_protocol.cpp").read_bytes()
-    for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'oneplus_aoa.c',
+    for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'nbt_android_auto.c',
                  'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp', 'test_video_capture.cpp']:
         files[name] = (ROOT / 'src/android_auto' / name).read_bytes()
     cxx = "qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-3.6.7/include -Ireference/src -Ireference/include"
@@ -172,15 +172,15 @@ static int endedAdd(int value) {
                  "./test_tls_usb_probe",
                  cxx + " test_video_capture.cpp aa_video_capture.cpp aa_audio.cpp libnbt_aa_core.a " + libs + " -o test_video_capture",
                  "./test_video_capture",
-                 "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -c oneplus_aoa.c -o oneplus_aoa.o",
-                 cxx + " tls_usb_probe.cpp reference/src/aa_cryptor.cpp oneplus_aoa.o " + libs + " -lusbdi -o oneplus_tls",
-                 "./oneplus_tls --selftest",
-                 "if ./oneplus_tls --tls-handshake 0 2; then exit 1; else test $? -eq 3; fi",
-                 "if ./oneplus_tls --discover 0 2; then exit 1; else test $? -eq 3; fi",
-                 "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c oneplus_aoa.c -o oneplus_capture.o",
-                 cxx + " aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp oneplus_capture.o libnbt_aa_core.a " + libs + " -lusbdi -o oneplus_capture",
-                 "./oneplus_capture --selftest",
-                 "if ./oneplus_capture --capture-video 0 2; then exit 1; else test $? -eq 3; fi",
+                 "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -c nbt_android_auto.c -o nbt_android_auto.o",
+                 cxx + " tls_usb_probe.cpp reference/src/aa_cryptor.cpp nbt_android_auto.o " + libs + " -lusbdi -o nbt_aa_tls_probe",
+                 "./nbt_aa_tls_probe --selftest",
+                 "if ./nbt_aa_tls_probe --tls-handshake 0 2; then exit 1; else test $? -eq 3; fi",
+                 "if ./nbt_aa_tls_probe --discover 0 2; then exit 1; else test $? -eq 3; fi",
+                 "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c nbt_android_auto.c -o nbt_aa_capture_probe.o",
+                 cxx + " aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp nbt_aa_capture_probe.o libnbt_aa_core.a " + libs + " -lusbdi -o nbt_aa_capture_probe",
+                 "./nbt_aa_capture_probe --selftest",
+                 "if ./nbt_aa_capture_probe --capture-video 0 2; then exit 1; else test $? -eq 3; fi",
                  "echo AA_SESSION_VM_TEST_OK"]
     files["run.sh"] = ("\n".join(commands) + "\n").encode()
     run_id = "aa-session-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
@@ -222,7 +222,7 @@ static int endedAdd(int value) {
                "vehicle_tested": False, "real_phone_handshake_tested": False}
     if passed:
         summary["artifacts_sha256"] = {}
-        for name in ["test_backend", "test_session", "test_protocol", "test_tls_usb_probe", "test_video_capture", "oneplus_capture", "oneplus_tls", "libnbt_aa_core.a"]:
+        for name in ["test_backend", "test_session", "test_protocol", "test_tls_usb_probe", "test_video_capture", "nbt_aa_capture_probe", "nbt_aa_tls_probe", "libnbt_aa_core.a"]:
             run(["scp", "-O", *opts, "qnx-build:" + remote + "/" + name, str(out / name)], timeout=30)
             data = (out / name).read_bytes()
             if not name.endswith(".a") and (data[:6] != b"\x7fELF\x01\x01" or data[18:20] != b"\x03\x00"):

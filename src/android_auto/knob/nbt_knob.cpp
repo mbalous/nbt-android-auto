@@ -12,7 +12,7 @@
 //   push            -> DPAD_CENTER (23)
 //   BACK key        -> BACK (4)
 //   MENU, OPTION, COM, MEDIA, NAV, MAP -> NOT forwarded: they stay with iDrive (they leave the Android Auto page)
-// Each event is one text line written to the FIFO the AA session reads (oneplus_native --capture-video, live mode):
+// Each event is one text line written to the FIFO the AA session reads (nbt_android_auto --capture-video, live mode):
 //   "R <keycode> <delta>\n"   or   "K <keycode> <1 down|0 up>\n"
 // While /fs/ram3/nbt-aa-hidden exists (Android Auto page not on screen) presses are not forwarded; releases always are,
 // so the phone never keeps a key held down.

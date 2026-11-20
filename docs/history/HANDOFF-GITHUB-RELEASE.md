@@ -1,5 +1,7 @@
 # Übergabe: Veröffentlichung auf GitHub (Stand 8.11.2026)
 
+Historical source names in this document have been normalized to current names.
+
 Ziel: das Projekt der Community auf GitHub bereitstellen, mit Installer-App (Windows + macOS) als Release-Download.
 Diese Notiz ist die Aufgabenbeschreibung für die nächste Sitzung. Sie enthält alles, was dafür aus dem bisherigen
 Verlauf wichtig ist.
@@ -95,7 +97,7 @@ QNX-Umgebung: `QNX_HOST=/usr/qnx650/host/qnx6/x86`, `QNX_TARGET=/usr/qnx650/targ
 1. **Lizenz:** Teile stammen aus NBT-AAD (nanaisu, https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) unter
    PolyForm-Noncommercial-1.0.0:
    - `src/android_auto/knob/ref/`,
-   - `aa_cryptor_mbedtls.cpp`, `accessory_window.c`, `oneplus_aoa.c`, `tls_usb_probe.cpp`, `aa_cryptor.hpp`.
+   - `aa_cryptor_mbedtls.cpp`, `accessory_window.c`, `nbt_android_auto.c`, `tls_usb_probe.cpp`, `aa_cryptor.hpp`.
 
    Folgen:
    - Das Gesamtprojekt kann damit nur nichtkommerziell veröffentlicht werden. Lizenztext und alle

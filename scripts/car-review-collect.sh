@@ -23,5 +23,5 @@ echo '=== live capture / decoder logs'
 for f in `ls -t $R/capture-*.log 2>/dev/null | sed 2q` `ls -t $R/decoder-*.log 2>/dev/null | sed 2q`; do echo "--- $f"; tail -25 $f; done
 echo '=== live cluster log'; tail -60 /fs/ram3/nbt-cluster.log 2>/dev/null
 for f in `ls -t $P/snapshots/restart-*.txt 2>/dev/null`; do echo "=== SNAPSHOT $f"; cat $f; done
-echo '=== processes'; pidin arg 2>/dev/null | grep -e native_service -e oneplus -e decode_runner -e NmeCmdLine -e nbt_ -e fifo_http -e accessory
+echo '=== processes'; pidin arg 2>/dev/null | grep -e native_service -e decode_runner -e NmeCmdLine -e nbt_ -e fifo_http -e accessory
 echo '=== end'

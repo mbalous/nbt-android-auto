@@ -5,12 +5,12 @@
  *
  * What it does, in a loop for as long as it runs:
  *   1. find exactly one phone on USB (find_phone)
- *   2. switch it to Android Open Accessory mode   (oneplus_native --switch-aa <bus> <device>)
+ *   2. switch it to Android Open Accessory mode   (nbt_android_auto --switch-aa <bus> <device>)
  *   3. start the video chain for one session:
  *        fifo_http      serves annexb.fifo (H.264 from the phone) on http://127.0.0.1:18765
  *        decode_runner  plays that URL with the stock Cinemo player into the stock video window
  *        nbt_hwvideo    asks VideoApp (MOST) to show that window in front of iDrive
- *   4. run the Android Auto session                (oneplus_native --capture-video <bus> <device>)
+ *   4. run the Android Auto session                (nbt_android_auto --capture-video <bus> <device>)
  *   5. when the session ends, stop the chain and start over.
  * nbt_knob (iDrive controller) and accessory_window (keeps the stock USB stack away from the phone) run for the whole
  * service life.
@@ -62,7 +62,7 @@ static long long ms(void)
 }
 
 /* Android Auto audio (docs/AA-AUDIO-PLAN.md). On by default: the phone sends media, guidance
- * and system audio over Android Auto, oneplus_native plays it through the car's browser audio front end (NBT-AAD browser
+ * and system audio over Android Auto, nbt_android_auto plays it through the car's browser audio front end (NBT-AAD browser
  * mode, A2I input_stereo_3), and audioconn (= nbt_audioconn) asks the car's ConnectionMaster for connection 0xb8 so the
  * speakers play it (car-verified on a BMW F07 2014 with the original HU_NBT).
  * Bluetooth audio instead (media sink ch 9 not offered, the phone keeps playing over Bluetooth) when:
@@ -135,7 +135,7 @@ static void set_audio_mode(void)
 }
 
 /* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
- * oneplus_native ended without removing it (crash, kill, unplugged mid-song), remove it here. nbt_audioconn keeps
+ * nbt_android_auto ended without removing it (crash, kill, unplugged mid-song), remove it here. nbt_audioconn keeps
  * audio-route.built before sending a build, until a remove is granted. */
 static void audio_route_cleanup(void)
 {
@@ -467,7 +467,7 @@ int main(int argc, char** argv)
     Child http = {0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
     Child decoder = {0, 0}; /* decode_runner -> NmeCmdLine */
     Child frames = {0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
-    Child capture = {0, 0}; /* oneplus_native --capture-video: the Android Auto session */
+    Child capture = {0, 0}; /* nbt_android_auto --capture-video: the Android Auto session */
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
@@ -494,7 +494,7 @@ int main(int argc, char** argv)
         goto done;
     fcntl(guard, F_SETFD, FD_CLOEXEC);
 
-    /* ---- environment for oneplus_native and the NBT-AAD core (read by the children) ---- */
+    /* ---- environment for nbt_android_auto and the NBT-AAD core (read by the children) ---- */
     setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
     setenv("NBT_AA_TLS_CERT", RUNTIME_DIR "/cert.pem", 1);
     setenv("NBT_AA_TLS_KEY", RUNTIME_DIR "/key.pem", 1);
@@ -632,7 +632,7 @@ int main(int argc, char** argv)
     if (!alive(&lease))
         goto done;
     /* Optional iDrive controller (nbt_knob present): observe-only MOST client, writes key lines into input.fifo, which the
-     * live AA session (oneplus_native --capture-video) reads. Runs for the whole service life, independent of sessions.
+     * live AA session (nbt_android_auto --capture-video) reads. Runs for the whole service life, independent of sessions.
      * nbt_knob needs /opt/sys/lib (libsys_dsi_colibry.so.3 and its dependencies; car 2026-11-07: "Library cannot be found"
      * with the Cinemo library path), so it gets its own library path for the fork. */
     if (!access("nbt_knob", X_OK) && (!mkfifo("input.fifo", 0600) || errno == EEXIST)) {
@@ -669,7 +669,7 @@ int main(int argc, char** argv)
         /* step 2: switch a normal-mode phone to accessory mode; it then reappears as 18d1:2d00/2d01 */
         if (type == PHONE_NORMAL) {
             Child sw;
-            char* args[] = {"./oneplus_native", "--switch-aa", bus_text, device_text, 0};
+            char* args[] = {"./nbt_android_auto", "--switch-aa", bus_text, device_text, 0};
             char id[16];
             report("connecting", session);
             snprintf(id, sizeof(id), "%04x:%04x", found_v, found_p);
@@ -759,7 +759,7 @@ int main(int argc, char** argv)
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
         if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
-            char* args[] = {"./oneplus_native", "--capture-video", bus_text, device_text, 0};
+            char* args[] = {"./nbt_android_auto", "--capture-video", bus_text, device_text, 0};
             set_audio_mode(); /* again per session: a failed audio route falls back to Bluetooth */
             snprintf(bus_text, sizeof(bus_text), "%d", bus);
             snprintf(device_text, sizeof(device_text), "%d", device);

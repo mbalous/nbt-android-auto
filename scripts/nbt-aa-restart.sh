@@ -20,7 +20,7 @@ S=$D/restart-`date +%d%H%M%S`.txt
   # drop-out before the restart was lost that way)
   for f in `ls -t $R/capture-*.log 2>/dev/null | sed 3q`; do echo "--- $f"; tail -60 $f; done
   for f in `ls -t $R/decoder-*.log 2>/dev/null | sed 2q` `ls -t $R/hwvideo-*.log 2>/dev/null | sed 1q` $R/switch.log; do echo "--- $f"; tail -20 $f; done
-  echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e oneplus -e native -e decode -e hwvideo -e mm
+  echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e native -e decode -e hwvideo -e mm
   echo '--- system log'; sloginfo | tail -400
 } > $S 2>&1
 n=0

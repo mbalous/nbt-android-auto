@@ -12,11 +12,11 @@ boot.sh (scripts/nbt-aa-boot.sh, started by the HMI plugin 15 s after the HMI)
  │   ├─ accessory_window ...... keeps the stock USB stack away from the phone (whole service life)
  │   ├─ nbt_knob .............. iDrive controller (MOST, observe-only) ──▶ input.fifo
  │   └─ per session:
- │       ├─ oneplus_native --switch-aa      phone ▶ Android Open Accessory mode
+ │       ├─ nbt_android_auto --switch-aa      phone ▶ Android Open Accessory mode
  │       ├─ fifo_http                       annexb.fifo ▶ http://127.0.0.1:18765
  │       ├─ decode_runner ▶ NmeCmdLine      stock Cinemo player draws into the stock video window
  │       ├─ nbt_hwvideo                     VideoApp (MOST) shows that window in front of iDrive
- │       └─ oneplus_native --capture-video  the Android Auto session:
+ │       └─ nbt_android_auto --capture-video  the Android Auto session:
  │             USB ▶ TLS/protocol (NBT-AAD core) ▶ H.264 ▶ annexb.fifo
  │             input.fifo ▶ key events ▶ phone
  │             navigation status ▶ nav.state
@@ -32,7 +32,7 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 | Program | Sources | Notes |
 |---|---|---|
 | `native_service` | `android_auto/nbt_native_service.c` | Start here: the file header explains the whole session flow and the mode files. |
-| `oneplus_native` | `android_auto/oneplus_aoa.c` (main, USB/AOA), `android_auto/tls_usb_probe.cpp` (TLS over USB), `android_auto/aa_video_capture.cpp` (session glue: video queue, controller input, navigation), `android_auto/aa_audio.cpp` (Android Auto audio over A2I, see docs/AA-AUDIO-PLAN.md), `android_auto/aa_cryptor_mbedtls.cpp` + the NBT-AAD core | Built with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`. |
+| `nbt_android_auto` | `android_auto/nbt_android_auto.c` (main, USB/AOA), `android_auto/tls_usb_probe.cpp` (TLS over USB), `android_auto/aa_video_capture.cpp` (session glue: video queue, controller input, navigation), `android_auto/aa_audio.cpp` (Android Auto audio over A2I, see docs/AA-AUDIO-PLAN.md), `android_auto/aa_cryptor_mbedtls.cpp` + the NBT-AAD core | Built with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`. |
 | `fifo_http` | `android_auto/nbt_fifo_http.cpp` | |
 | `decode_runner` | `android_auto/nbt_decode_runner.cpp` | Explains the NmeCmdLine options and why decoding stays in software. |
 | `accessory_window` | `android_auto/accessory_window.c` | Adapted from NBT-AAD. |

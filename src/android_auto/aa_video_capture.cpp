@@ -1,5 +1,5 @@
 // aa_video_capture: runs one Android Auto session (the NBT-AAD core, nbt::AASession) over the phone's USB accessory link
-// and takes care of what the head unit needs from it. Part of the oneplus_native program (--capture-video).
+// and takes care of what the head unit needs from it. Part of the nbt_android_auto program (--capture-video).
 //
 // Two modes:
 //   capture mode (diagnostics)  H.264 frames go to <prefix>.h264 with an index <prefix>.csv; bounded by time, frame
@@ -371,7 +371,7 @@ const size_t kLiveBudget = 3 * 1024 * 1024; // queue limit in bytes
 
 struct Capture {
     pthread_mutex_t mutex;
-    nbt_capture_transfer transfer; // USB transfer callback from oneplus_aoa.c
+    nbt_capture_transfer transfer; // USB transfer callback from nbt_android_auto.c
     void* transport;
     int socket;      // our end of the socket pair to the session
     int data;        // capture file or live FIFO
@@ -676,7 +676,7 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
 
 } // namespace
 
-// ===== entry point (called by oneplus_aoa.c once the phone is in accessory mode) =======================================
+// ===== entry point (called by nbt_android_auto.c once the phone is in accessory mode) =======================================
 //
 // transfer: USB bulk transfer callback (direction 0 = to the phone, 1 = from the phone); context: its transport.
 // prefix:   capture mode file prefix (must be under /fs/ram3/nbt-aa- when running as root).

@@ -14,12 +14,12 @@ Parts of this project are taken from or based on NBT-AAD by nanaisu,
 
 - `src/android_auto/knob/ref/` (MOST/DSI client, CCS controller decoding)
 - `src/android_auto/aa_cryptor.hpp`, `src/android_auto/aa_cryptor_mbedtls.cpp`
-- `src/android_auto/accessory_window.c`, `src/android_auto/oneplus_aoa.c`, `src/android_auto/tls_usb_probe.cpp`
+- `src/android_auto/accessory_window.c`, `src/android_auto/nbt_android_auto.c`, `src/android_auto/tls_usb_probe.cpp`
 - the Android Auto protocol core (`aa_session`, `sdr_builder`, `audio_acks`, `crash_handler`, and the browser audio
   mode `audio/browser_audio` with its helpers `asound_device`, `audio_route`, `mixer`, `resampler`, `drift`,
   `config`, `stream_rate`, `pcm_ring`, `playout`), which is built from the
   upstream repository at commit `41975f2` plus `scripts/aa_session_overlay.py` and [patches/](patches/) (both are
-  modifications of NBT-AAD under the same license) and is contained in the `oneplus_native` binary
+  modifications of NBT-AAD under the same license) and is contained in the `nbt_android_auto` binary
 - the head-unit TLS identity `cert.pem` / `key.pem` / `ca.pem` shipped in the installer payload (the well-known
   Android Auto head-unit test identity, as embedded in upstream `aa_cryptor.cpp`; it is public and not a secret)
 
@@ -36,7 +36,7 @@ download the release archive.
 
 ## speexdsp
 
-The `oneplus_native` binary contains the speexdsp 1.2.1 resampler (`resample.c`, unmodified), vendored in NBT-AAD under
+The `nbt_android_auto` binary contains the speexdsp 1.2.1 resampler (`resample.c`, unmodified), vendored in NBT-AAD under
 `milestone-7/third_party/speexdsp/` and used by its browser audio mode. It is not included in this repository; the
 build takes it from the NBT-AAD checkout. Its license:
 
