@@ -5,10 +5,11 @@
 #include "aa_video_capture.h"
 #include <fstream>
 #include <iterator>
-struct FakeUsb {int fd,result;const char* prefix;};
+struct FakeUsb {int fd,result;const char* prefix;unsigned read_size;};
 static int fake_transfer(void* v,int input,unsigned char* p,unsigned* size) {
     FakeUsb* f=(FakeUsb*)v;
     if(input) {
+        require(*size==f->read_size,"capture requests the configured USB read size");
         fd_set set;FD_ZERO(&set);FD_SET(f->fd,&set);struct timeval t={2,0};
         if(select(f->fd+1,&set,0,0,&t)<=0)return 0;
         // Deliberately split TLS records and AA envelopes across USB transfers.
@@ -20,7 +21,7 @@ static int fake_transfer(void* v,int input,unsigned char* p,unsigned* size) {
     return 1;
 }
 static void* capture_thread(void* p) {
-    FakeUsb* f=(FakeUsb*)p;f->result=nbt_video_capture_run(fake_transfer,f,f->prefix);return 0;
+    FakeUsb* f=(FakeUsb*)p;f->result=nbt_video_capture_run(fake_transfer,f,f->prefix,f->read_size);return 0;
 }
 static Bytes read_file(const char* p) {
     std::ifstream f(p,std::ios::binary);return Bytes(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());
@@ -46,10 +47,11 @@ int main() {
     setenv("NBT_RX_TIMEOUT_S","5",1);
     const unsigned char config_data[]={0,0,0,1,0x67,0x42,0,0x1f,0,0,0,1,0x68,0xab};
     const unsigned char video_data[]={0,0,0,1,0x65,0xaa,0xbb};
-    for(unsigned scenario=0;scenario<3;++scenario) {
-        const char* prefix=scenario==1 ? "capture-invalid" : scenario==2 ? "capture-fragmented" : "capture-valid";
+    for(unsigned scenario=0;scenario<4;++scenario) {
+        const char* prefixes[]={"capture-valid","capture-invalid","capture-fragmented","capture-usb-failed"};
+        const char* prefix=prefixes[scenario];
         int sv[2];require(socketpair(AF_UNIX,SOCK_STREAM,0,sv)==0,"fake USB pair");
-        FakeUsb fake={sv[0],-1,prefix};pthread_t thread;
+        FakeUsb fake={sv[0],-1,prefix,scenario==2 ? 16384U : NBT_CAPTURE_MAX_TRANSFER};pthread_t thread;
         require(pthread_create(&thread,0,capture_thread,&fake)==0,"capture thread");
         Frame request=receive_frame(sv[1]);require(message(request.data)==1,"capture starts version negotiation");
         peer *server=(peer*)calloc(1,sizeof(peer)),*carrier=(peer*)calloc(1,sizeof(peer));
@@ -73,11 +75,15 @@ int main() {
         if(scenario!=1) {
             Bytes ack=receive_encrypted(sv[1],server,6);
             require(message(ack)==0x8004 && ack.size()>=6 && ack[2]==8 && ack[3]==7,"video ack preserves stream id");
-            send_encrypted(sv[1],server,carrier,0,msg(15));
-            require(message(receive_encrypted(sv[1],server,0))==16,"capture bye response");
+            if(scenario==3) {
+                require(shutdown(sv[1],SHUT_WR)==0,"fail bulk IN after valid media");
+            } else {
+                send_encrypted(sv[1],server,carrier,0,msg(15));
+                require(message(receive_encrypted(sv[1],server,0))==16,"capture bye response");
+            }
         } else usleep(200000);
-        shutdown(sv[1],SHUT_RDWR);close(sv[1]);pthread_join(thread,0);close(sv[0]);
-        require(fake.result==(scenario==1 ? 3 : 0),"capture success/error result");
+        pthread_join(thread,0);close(sv[1]);close(sv[0]);
+        require(fake.result==(scenario==1 || scenario==3 ? 3 : 0),"capture success/error result");
         release(server);free(carrier);
     }
     Bytes expected(config_data,config_data+sizeof(config_data));expected.insert(expected.end(),video_data,video_data+sizeof(video_data));

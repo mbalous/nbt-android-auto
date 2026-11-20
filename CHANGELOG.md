@@ -5,7 +5,8 @@ Versions are named after the build date of the installer payload.
 ## Unreleased
 
 The pre-merge browser audio route and A2I output were tested on a BMW F07 (2014, original HU_NBT). The integration
-with Valinet's fork has not yet been car-tested and is not part of a released installer payload.
+with Valinet's fork passed a limited parked check after a USB cable swap. It is not fully vehicle-validated or part of
+a released installer payload.
 
 - **Android Auto sound over USB, no Bluetooth needed** for music, navigation voice and system sounds. The original
   NBT has no `libasound`, so the NBT-AAD browser-audio mixer now writes to the A2I endpoint `input_stereo_3`

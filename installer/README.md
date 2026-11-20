@@ -71,6 +71,30 @@ python3 nbt_aa_installer.py --cli install    # terminal
 
 The `payload/` folder must be next to the script.
 
+For verified SSH host-key checking, pass an OpenSSH `known_hosts` file containing the independently verified NBT key:
+
+```
+python3 nbt_aa_installer.py --cli install --host 169.254.199.99 --known-hosts /path/to/known_hosts
+```
+
+Unknown or changed keys are rejected before authentication. Verify the fingerprint through a trusted channel first;
+`ssh-keyscan` alone does not establish identity. The same option works for the GUI and other CLI actions. Without it,
+the installer accepts an unknown host key and logs its fingerprint after connecting.
+
+## Safer car testing
+
+The merged build has had limited parked testing; see the [test checklist](../CAR-TEST-aa-dev.md). Park safely,
+use stable vehicle power and confirm that the head unit is an original NBT before installation.
+Read-only inspection should establish the existing installation state, free space
+and whether another Android Auto solution or similarly named service is present. Keep the existing installation and
+settings backed up, and prepare a known-working recovery path where possible.
+
+The installer's preflight creates its target folders and a temporary write-test file. Each payload file is verified
+before rename, but an interrupted installation can leave a mixture of files. If the result is uncertain, stop and
+inspect before retrying or restarting. Uninstall deletes the two folders above and stops `native_service` and
+`nbt_cluster` by name; check that those processes belong to this package first. It cannot guarantee recovery if SSH or
+the head unit is no longer available. Logs may contain vehicle and phone details; keep them private.
+
 ## For developers
 
 - `python installer/make_payload.py [version] --built build/qnx-build-<time>` collects the build files in `installer/payload/`.

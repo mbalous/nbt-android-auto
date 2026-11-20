@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / ".local" / "car-logs"
 P = "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
+MAX_LOG_BYTES = 20_000_000
 
 REMOTE = r"""
 T=%(token)s
@@ -39,7 +40,7 @@ for f in /fs/ram3/nbt-aa-* /fs/ram3/nbt-cluster.log /fs/ram3/nbt-aa-native/*.log
          /fs/ram3/nbt-aa-native/audio-route.* /fs/ram3/nbt-aa-native/volume /fs/ram3/nbt-aa-native/nowplaying; do
   test -f $f && emit $f
 done
-run sloginfo.txt 'sloginfo | tail -3000'
+run sloginfo.txt 'sloginfo -t | tail -3000'
 run pidin-info.txt 'pidin info'
 run processes.txt 'pidin -f anJ'
 run df.txt 'df -k'
@@ -48,6 +49,7 @@ run date.txt 'date'
 
 ERROR_PATTERNS = [
     ("USB transfer failed", r"AA_USB_(IN|OUT)_FAILED"),
+    ("video FIFO writer failed", r"AA_LIVE_WRITER_FAILED"),
     ("video stall", r"AA_STALL no video"),
     ("ByeBye not answered", r"AA_BYEBYE no answer"),
     ("live queue drops", r"AA_LIVE_QUEUE dropped=[1-9]"),
@@ -63,6 +65,13 @@ ERROR_PATTERNS = [
     ("hwvideo gave up", r"\[hw\].*(no acknowledgement|giving up)|nbt_hwvideo ended"),
     ("signal / crash", r"died by signal|CRASH"),
     ("NME options changed back", r"NME_OPTIONS .*: [0-9]+ written back"),
+]
+
+SYSTEM_PATTERNS = [
+    ("EHCI transfer error", r"EHCI - Error on (?:Control|Bulk) Transfer(?!.*Retrying transfer)"),
+    ("USB control-transfer error", r"serusb_ctrl_io: error control urb status"),
+    ("USB Ethernet vendor-command error", r"ecm_vendor_command error"),
+    ("display-handle warning", r"screen: win_post_ref: couldn't allocate display handle"),
 ]
 
 
@@ -134,6 +143,25 @@ def when(line):
     return dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S") if m else None
 
 
+def report_patterns(out, dest, files, patterns):
+    counts, examples = Counter(), defaultdict(list)
+    for f in files:
+        if not f.is_file() or f.stat().st_size > MAX_LOG_BYTES:
+            continue
+        for line in read(f).splitlines():
+            for label, pat in patterns:
+                if re.search(pat, line):
+                    counts[label] += 1
+                    if len(examples[label]) < 2:
+                        examples[label].append("%s: %s" % (f.relative_to(dest), line.strip()[:160]))
+    if not counts:
+        out("- no matching entries")
+    for label, count in counts.most_common():
+        out("- %dx %s" % (count, label))
+        for example in examples[label]:
+            out("  - `%s`" % example)
+
+
 def summary(dest):
     car = dest / "car" / P.lstrip("/")
     ram = dest / "car" / "fs" / "ram3"
@@ -200,32 +228,45 @@ def summary(dest):
             flag = "  **suspected reboot while Android Auto ran** (next boot %ds later)" % gap
         out("- %s: last state `%s`%s" % (d.name, last[20:120], flag))
 
-    # error patterns across every text file
-    out("\n## Error patterns (all pulled logs)\n")
-    counts, examples = Counter(), defaultdict(list)
-    for f in dest.rglob("*"):
-        if not f.is_file() or f.stat().st_size > 20_000_000:
-            continue
-        for l in read(f).splitlines():
-            for label, pat in ERROR_PATTERNS:
-                if re.search(pat, l):
-                    counts[label] += 1
-                    if len(examples[label]) < 2:
-                        examples[label].append("%s: %s" % (f.relative_to(dest), l.strip()[:160]))
-    if not counts:
-        out("- none")
-    for label, c in counts.most_common():
-        out("- %dx %s" % (c, label))
-        for e in examples[label]:
-            out("  - `%s`" % e)
-
     # current state
     out("\n## Right now\n")
-    out("- state: `%s`" % read(ram / "nbt-aa-state").strip().replace("\n", " ")[:200])
+    state_text = read(ram / "nbt-aa-state").strip()
+    out("- state: `%s`" % (state_text.replace("\n", " ")[:200] or "unavailable"))
     df = read(dest / "live" / "df.txt")
     m = re.search(r"\n(\S*\s+\d+\s+\d+\s+(\d+)\s+(\d+)%\s+/var/opt[^\n]*)", df) or re.search(r"\n([^\n]*hmi[^\n]*)", df)
     if m:
         out("- flash (package folder): `%s`" % m.group(1).strip()[:120])
+
+    out("\n## Reported running session\n")
+    state = dict(line.split("=", 1) for line in state_text.splitlines() if "=" in line)
+    session = state.get("session", "")
+    active = None
+    if state.get("state") == "running" and re.fullmatch(r"[1-9][0-9]*", session):
+        candidate = ram / "nbt-aa-native" / ("capture-%s.log" % session)
+        if candidate.is_file() and candidate.stat().st_size <= MAX_LOG_BYTES:
+            capture = read(candidate)
+            # A session can start shutting down between reading the state and copying its log.
+            if "AA_VIDEO_CAPTURE_BEGIN" in capture and not any(
+                marker in capture for marker in ("AOA_PROBE_END", "AA_VIDEO_CAPTURE_STOP", "AA_VIDEO_CAPTURE_END")
+            ):
+                active = candidate
+    if active is not None:
+        out("- capture: `%s` (state and logs are read separately)" % active.relative_to(dest))
+        report_patterns(out, dest, [active], ERROR_PATTERNS)
+    else:
+        out("- no matching in-progress capture in this pull")
+
+    system_log = dest / "live" / "sloginfo.txt"
+    out("\n## QNX system log (not attributed to an Android Auto session)\n")
+    if system_log.is_file() and system_log.stat().st_size:
+        report_patterns(out, dest, [system_log], SYSTEM_PATTERNS + ERROR_PATTERNS)
+    else:
+        out("- unavailable")
+
+    out("\n## Error patterns in other pulled logs (may include older or duplicate entries)\n")
+    other_logs = (f for folder in ("car", "live") for f in sorted((dest / folder).rglob("*"))
+                  if f not in (active, system_log))
+    report_patterns(out, dest, other_logs, ERROR_PATTERNS)
 
     text = "\n".join(lines) + "\n"
     (dest / "summary.md").write_text(text)

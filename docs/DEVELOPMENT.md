@@ -49,6 +49,12 @@ Helper scripts for a Windows host:
 - `scripts/Invoke-QnxBuild.ps1 -Action Probe` checks the toolchain; `build.cmd` builds and runs `src/hello_nbt.cpp` as a
   smoke test.
 
+These PowerShell helpers are tied to the documented `192.168.56.10` VM and, for key bootstrapping,
+`192.168.56.1` host. If VirtualBox uses another host-only address, do not point them at a different machine or disable
+their checks. Configure the actual VM address explicitly and verify its SSH host key at the VM console before trusting
+it. On a fresh QNX installation, root can create a non-root build account interactively with `passwd nbtbuild`;
+choose a nonempty password and verify the VM's SSH authentication settings.
+
 The old QNX OpenSSH 5.2 needs `HostKeyAlgorithms +ssh-rsa` and `MACs +hmac-sha1` (only for this host).
 The PowerShell bootstrap helpers and older VM protocol-test scripts are restricted to `192.168.56.10`; do not
 weaken their target checks for a different VM. Configure its actual address in the SSH alias and independently
@@ -81,6 +87,13 @@ Which program is built from which files: [src/README.md](../src/README.md).
    They are BMW software: never commit or publish them. Without them everything except the plugin is built.
 3. SSH from your PC to the VM works with a key (see [QNX VM](#qnx-vm)); the build runs as the normal VM user, not root.
    Mbed TLS 3.6.7 is downloaded automatically on the first run (SHA-256 checked).
+
+On Windows with a checkout in WSL, use the Windows OpenSSH client if the WSL OpenSSH build cannot negotiate the VM's
+legacy `ssh-rsa` host key. Check that the selected host can reach the VM and that Git for Windows is on its PATH.
+Windows Git may report a false executable-bit change on a WSL checkout: verify its status with Linux Git before using a
+process-scoped `core.filemode=false` override for the Windows build. Do not ignore actual source modifications or add a
+global Git trust exception. Windows OpenSSH needs forward-slash UNC paths for `UserKnownHostsFile`; `build_all.py`
+normalizes that argument.
 
 ### Every build
 
@@ -157,7 +170,7 @@ the TLS inspection and audio safety tests. Run the host checks locally with:
 ```sh
 python3 scripts/test_host.py
 python3 scripts/test_host.py --sanitize
-python3 -m pip install cryptography==44.0.3
+python3 -m pip install cryptography==44.0.3 "paramiko>=3.4,<4"
 python3 -m compileall -q scripts installer tools experiments
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 ```

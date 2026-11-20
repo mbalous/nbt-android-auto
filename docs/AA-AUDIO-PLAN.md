@@ -2,7 +2,8 @@
 
 The session executable name in this historical report is normalized to its current name.
 The 15 November implementation below describes the pre-merge browser audio mode, now selected with `aa-audio`.
-The default is Valinet's `f6` main source; the combined implementation has not yet been car-tested.
+The default is Valinet's `f6` main source. Wired stereo worked in a limited parked retest of the combined
+implementation; switching sources and the optional browser audio route were not validated.
 
 ## Findings
 

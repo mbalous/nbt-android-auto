@@ -56,8 +56,7 @@ static volatile sig_atomic_t stopping;
 
 static void stopped(int signal_number)
 {
-    (void)signal_number;
-    stopping = 1;
+    stopping = signal_number;
 }
 
 static long long ms(void)
@@ -327,6 +326,7 @@ typedef struct {
     pid_t pid; /* 0 = not running */
     int status;
     const char* name; /* args[0], for incident reports */
+    pid_t started_pid;
 } Child;
 
 /* 1 while the child runs; reaps it (pid = 0) once it has ended */
@@ -336,7 +336,17 @@ static int alive(Child* c)
     pid_t r;
     if (!c->pid)
         return 0;
-    r = waitpid(c->pid, &s, WNOHANG);
+    do {
+        r = waitpid(c->pid, &s, WNOHANG);
+    } while (r < 0 && errno == EINTR);
+    if (r < 0) {
+        char d[112];
+        snprintf(d, sizeof(d), "%s pid=%ld errno=%d", c->name, (long)c->pid, errno);
+        plog_line("waitpid failed: %s", d, g_incident_session);
+        c->status = -1;
+        c->pid = 0;
+        return 0;
+    }
     if (r == c->pid) {
         c->pid = 0;
         c->status = s;
@@ -363,6 +373,9 @@ static void end(Child* c)
     while (alive(c) && ms() < until)
         usleep(20000);
     if (alive(c)) {
+        char d[96];
+        snprintf(d, sizeof(d), "%s pid=%ld did not stop after SIGTERM; sending SIGKILL", c->name, (long)c->pid);
+        plog_line("child shutdown: %s", d, g_incident_session);
         kill(-c->pid, SIGKILL);
         while (waitpid(c->pid, &c->status, 0) < 0 && errno == EINTR) {
         }
@@ -373,7 +386,7 @@ static void end(Child* c)
 /* start args[0] in its own process group, stdin from input (or /dev/null), stdout+stderr to log (or /dev/null) */
 static Child spawn(char* const args[], const char* input, const char* log)
 {
-    Child c = {0, 0, 0};
+    Child c = {0, -1, 0, 0};
     c.name = args[0];
     c.pid = fork();
     if (!c.pid) {
@@ -400,8 +413,10 @@ static Child spawn(char* const args[], const char* input, const char* log)
     }
     if (c.pid < 0)
         c.pid = 0;
-    else
+    else {
+        c.started_pid = c.pid;
         setpgid(c.pid, c.pid);
+    }
     return c;
 }
 
@@ -669,13 +684,13 @@ static Child start_hwvideo(int center, int right, unsigned session, unsigned res
 
 int main(int argc, char** argv)
 {
-    Child lease = {0, 0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
-    Child http = {0, 0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
-    Child decoder = {0, 0, 0}; /* decode_runner -> NmeCmdLine */
-    Child frames = {0, 0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
-    Child capture = {0, 0, 0}; /* nbt_android_auto --capture-video: the Android Auto session */
-    Child knob = {0, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
-    Child hwv = {0, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child lease = {0, -1, 0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
+    Child http = {0, -1, 0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
+    Child decoder = {0, -1, 0, 0}; /* decode_runner -> NmeCmdLine */
+    Child frames = {0, -1, 0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
+    Child capture = {0, -1, 0, 0}; /* nbt_android_auto --capture-video: the Android Auto session */
+    Child knob = {0, -1, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
+    Child hwv = {0, -1, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     int recovered = 0; /* pid of a native_service whose stale lock we took over */
@@ -737,6 +752,7 @@ int main(int argc, char** argv)
     }
     setenv("NBT_AA_CAPTURE_PREFIX", RUNTIME_DIR "/session", 1);
     setenv("NBT_AA_LIVE_FIFO", RUNTIME_DIR "/annexb.fifo", 1);
+    setenv("NBT_AA_USB_RX_16K", access(PKG_DIR "usb-rx-16k", F_OK) == 0 ? "1" : "0", 1);
     /* identity the head unit reports to the phone in the service discovery response */
     setenv("NBT_SDR_IDENTITY", "1", 1);
     setenv("NBT_CAR_MAKE", "BMW", 1);
@@ -867,6 +883,7 @@ int main(int argc, char** argv)
 
     /* ---- one Android Auto session per loop pass ---- */
     while (!stopping && alive(&lease)) {
+        char session_end[160] = "";
         audio_route_cleanup();
         /* Optional HMI gate (file gate.mode in the runtime directory): the phone is only touched after the Android Auto
          * page in the HMI was opened, which creates /fs/ram3/nbt-aa-request (see src/idrive/aa_entry_plugin.cpp). */
@@ -1019,13 +1036,26 @@ int main(int argc, char** argv)
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
             report("running", session);
-            plog_line("session running (phone %s)", getenv("NBT_PHONE_ID"), session);
             {
                 long long began = ms(), last_hwv = ms(), last_persist = ms();
                 unsigned hwv_restarts = 0;
-                const char* why;
-                while (!stopping && alive(&capture) && alive(&http) &&
-                       (live || (alive(&decoder) && (hw || alive(&frames))))) {
+                const Child* ended = NULL;
+                const char* phone = getenv("NBT_PHONE_ID");
+                char detail[112];
+                snprintf(detail, sizeof(detail), "phone=%s capture_pid=%ld http_pid=%ld decoder_pid=%ld",
+                         phone ? phone : "unknown", (long)capture.started_pid, (long)http.started_pid, (long)decoder.pid);
+                plog_line("session running (%s)", detail, session);
+                while (!stopping) {
+                    if (!alive(&capture))
+                        ended = &capture;
+                    else if (!alive(&http))
+                        ended = &http;
+                    else if (!live && !alive(&decoder))
+                        ended = &decoder;
+                    else if (!live && !hw && !alive(&frames))
+                        ended = &frames;
+                    if (ended)
+                        break;
                     usleep(200000);
                     keep_reported(session);
                     /* "connected, but no picture": nbt_hwvideo gives up (exit 5) when VideoApp never acknowledged the
@@ -1037,7 +1067,8 @@ int main(int argc, char** argv)
                     if (hw && !live && !alive(&hwv) && hwv_restarts < 6 && ms() - last_hwv >= 10000 &&
                         access("/fs/ram3/nbt-aa-hidden", F_OK)) {
                         char line[64];
-                        snprintf(line, sizeof(line), "%d", WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
+                        snprintf(line, sizeof(line), "%d",
+                                 hwv.status >= 0 && WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
                         plog_line("nbt_hwvideo ended (exit %s): starting it again", line, session);
                         incident("no-picture", line, 60000);
                         hwv = start_hwvideo(center, right, session, ++hwv_restarts);
@@ -1052,18 +1083,25 @@ int main(int argc, char** argv)
                         plog_line("session still running%s", 0, session);
                     }
                 }
-                why = stopping ? "service stopping"
-                      : !alive(&capture) ? "Android Auto session ended (phone / USB / protocol)"
-                      : !alive(&http) ? "fifo_http ended"
-                      : "decoder ended";
-                {
-                    char line[160];
-                    snprintf(line, sizeof(line), "%s after %llds, picture restarts %u", why, (ms() - began) / 1000,
-                             hwv_restarts);
-                    plog_line("session end: %s", line, session);
-                    if (!stopping)
-                        incident("session-end", line, 30000);
+                if (ended) {
+                    const char* outcome = "status unavailable";
+                    int code = -1;
+                    if (ended->status >= 0 && WIFEXITED(ended->status)) {
+                        outcome = "exit";
+                        code = WEXITSTATUS(ended->status);
+                    } else if (ended->status >= 0 && WIFSIGNALED(ended->status)) {
+                        outcome = "signal";
+                        code = WTERMSIG(ended->status);
+                    }
+                    snprintf(detail, sizeof(detail), "%s ended after %llds, pid=%ld %s=%d",
+                             ended->name ? ended->name : "unknown child", (ms() - began) / 1000,
+                             (long)ended->started_pid, outcome, code);
+                } else {
+                    snprintf(detail, sizeof(detail), "service stopping after %llds, signal=%d", (ms() - began) / 1000,
+                             (int)stopping);
                 }
+                snprintf(session_end, sizeof(session_end), "%s, picture restarts %u", detail, hwv_restarts);
+                plog_line("session end: %s", session_end, session);
                 plog_tail("/fs/ram3/nbt-aa-plugin.log", "HMI plugin log");
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
@@ -1079,6 +1117,8 @@ int main(int argc, char** argv)
         if (center)
             hmi_visible();
         end(&capture);
+        if (*session_end && !stopping)
+            incident("session-end", session_end, 30000);
         audio_route_cleanup();
         if (!live)
             end(&http);
