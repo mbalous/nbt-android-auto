@@ -945,10 +945,17 @@ int main(int argc, char** argv)
             end(&sw);
             if (stopping)
                 break;
-            /* no AOA answer at all: not an Android phone (USB stick, other device): leave it alone until it is unplugged */
+            /* Only ignore devices that actually refused GET_PROTOCOL (unsupported version, STALL, or short reply).
+             * Transient attach/connect/USB errors before a definitive answer should retry instead of blacklisting. */
             if (!log_has("switch.log", "AOA_PROTOCOL_OK")) {
-                ignore_dev(bus, device, found_v, found_p);
-                report("unsupported_device", session);
+                if (log_has("switch.log", "AOA_PROTOCOL_UNSUPPORTED") ||
+                    log_has("switch.log", "AOA_REQUEST id=51 index=0 result=0 status=02000004 ") ||
+                    log_has("switch.log", "AOA_REQUEST id=51 index=0 result=0 status=01000000 ")) {
+                    ignore_dev(bus, device, found_v, found_p);
+                    report("unsupported_device", session);
+                } else {
+                    ++attempts;
+                }
                 sleep(1);
                 continue;
             }
