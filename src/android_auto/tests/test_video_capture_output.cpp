@@ -149,6 +149,72 @@ void test_live_recovery()
     expect_live_output(c, frame);
 }
 
+struct FakeBulkIn {
+    Capture* capture;
+    unsigned calls;
+    bool stop_during_transfer;
+    bool oversize;
+};
+
+int fake_bulk_in(void* context, int input, unsigned char* bytes, unsigned* size)
+{
+    FakeBulkIn* usb = static_cast<FakeBulkIn*>(context);
+    require(input == 1, "reader requested bulk IN");
+    require(*size == 16384, "reader requested the selected bulk IN size");
+    if (usb->oversize) {
+        ++usb->calls;
+        ++*size;
+        return 1;
+    }
+    if (usb->stop_during_transfer) {
+        pthread_mutex_lock(&usb->capture->mutex);
+        usb->capture->stop_reader = true;
+        pthread_mutex_unlock(&usb->capture->mutex);
+        ++usb->calls;
+        return 0;
+    }
+    switch (++usb->calls) {
+    case 1:
+    case 2:
+        *size = 0;
+        return 1;
+    case 3:
+        bytes[0] = 0xa5;
+        *size = 1;
+        return 1;
+    default:
+        bytes[0] = 0xb6;
+        *size = 1; // A failure is fatal even if it reports partial data.
+        return 0;
+    }
+}
+
+void test_bulk_reader(bool stop_during_transfer, bool oversize = false)
+{
+    int pair[2];
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0, "open capture socket pair");
+    Capture c;
+    c.read_size = 16384;
+    FakeBulkIn usb = {&c, 0, stop_during_transfer, oversize};
+    c.transport = &usb;
+    c.transfer = fake_bulk_in;
+    c.socket = pair[0];
+    reader(&c);
+    if (stop_during_transfer) {
+        require(usb.calls == 1 && !c.reader_error, "shutdown starts no new reads and does not report a pump failure");
+    } else if (oversize) {
+        require(usb.calls == 1 && c.reader_error && strcmp(c.reader_error, "usb_in_invalid_size") == 0,
+                "completion exceeding the submitted read size is rejected");
+    } else {
+        require(usb.calls == 4 && c.reader_error && strcmp(c.reader_error, "usb_in") == 0,
+                "read through empty packets, then stop without replaying a failed transfer");
+        const uint8_t expected[] = {0xa5};
+        expect_bytes(pair[1], expected, sizeof(expected));
+    }
+    expect_end(pair[1]);
+    close(pair[0]);
+}
+
 void test_focus_handoff()
 {
     char path[] = "/tmp/nbt-focus-test-XXXXXX";
@@ -203,7 +269,10 @@ int main()
     test_live_stream();
     test_live_recovery();
     test_padded_queue_budget();
+    test_bulk_reader(false);
+    test_bulk_reader(true);
+    test_bulk_reader(false, true);
     test_focus_handoff();
-    puts("Capture output OK: diagnostic index, live bytes, and recovery after backpressure");
+    puts("Capture output OK: diagnostic index, live bytes, backpressure, USB reader, and focus handoff");
     return 0;
 }

@@ -166,7 +166,7 @@ def main():
     if args.ssh_config.is_file():
         ssh += ["-F", str(args.ssh_config)]
     if args.known_hosts.is_file():
-        ssh += ["-o", "UserKnownHostsFile=" + str(args.known_hosts)]
+        ssh += ["-o", "UserKnownHostsFile=" + args.known_hosts.as_posix()]
     if args.identity:
         ssh += ["-i", str(args.identity)]
     ssh += ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]

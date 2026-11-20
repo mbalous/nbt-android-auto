@@ -100,11 +100,17 @@ class InstallError(Exception):
 # --------------------------------------------------------------------------------------------------------------------
 # SSH access (exec channels only: the NBT's sshd has no reliable SFTP)
 class Nbt:
-    def __init__(self, host, port, user, password=None, key_file=None, log=print):
+    def __init__(self, host, port, user, password=None, key_file=None, log=print, known_hosts=None):
         self.log = log
         self.client = paramiko.SSHClient()
-        # Lay users cannot verify host keys; the link is a direct cable to the car. The fingerprint is logged.
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        if known_hosts:
+            try:
+                self.client.load_host_keys(str(known_hosts))
+            except (OSError, ValueError, paramiko.SSHException) as exc:
+                raise InstallError('Cannot load SSH known-hosts file: %s' % exc) from exc
+            self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
             pkey = paramiko.RSAKey.from_private_key_file(key_file) if key_file else None
             self.client.connect(host, port=port, username=user, password=password, pkey=pkey,
@@ -112,14 +118,20 @@ class Nbt:
                                 look_for_keys=False, allow_agent=False, timeout=20, banner_timeout=60,
                                 auth_timeout=60)
         except paramiko.AuthenticationException:
+            self.client.close()
             raise InstallError('Login failed: wrong user or password.' if not GERMAN else
                                'Anmeldung fehlgeschlagen: Benutzer oder Passwort falsch.')
+        except paramiko.BadHostKeyException as exc:
+            self.client.close()
+            raise InstallError('SSH host key mismatch for %s.' % host) from exc
         except paramiko.SSHException as exc:
-            if 'host key' in str(exc).lower():
+            self.client.close()
+            if not known_hosts and 'host key' in str(exc).lower():
                 raise InstallError('The NBT only offers ssh-rsa host keys, which paramiko %s no longer supports. '
                                    'Use paramiko 3.x: pip install "paramiko>=3.4,<4"' % paramiko.__version__)
             raise InstallError('SSH error: %s' % exc)
         except (socket.timeout, OSError) as exc:
+            self.client.close()
             raise InstallError(('No connection to %s:%d (%s). Cable, IP address and ignition?' if not GERMAN else
                                 'Keine Verbindung zu %s:%d (%s). Kabel, IP-Adresse und Zuendung pruefen.')
                                % (host, port, exc))
@@ -330,7 +342,8 @@ def run_cli(args):
     if paramiko is None:
         sys.exit(tr('no_paramiko'))
     password = None if args.key else getpass.getpass('%s %s@%s: ' % (tr('password'), args.user, args.host))
-    nbt = Nbt(args.host, args.port, args.user, password=password, key_file=args.key)
+    nbt = Nbt(args.host, args.port, args.user, password=password, key_file=args.key,
+              known_hosts=args.known_hosts)
     try:
         if args.cli == 'logs':
             save_logs(nbt, print, args.output or 'nbt-aa-logs-%s.zip' % time.strftime('%Y%m%d-%H%M%S'),
@@ -403,7 +416,8 @@ def run_gui(args):
         def work():
             nbt = None
             try:
-                nbt = Nbt(host, port, user, password=password or None, key_file=args.key, log=log)
+                nbt = Nbt(host, port, user, password=password or None, key_file=args.key, log=log,
+                          known_hosts=args.known_hosts)
                 if action == 'logs':
                     save_logs(nbt, log, extra, args.root)
                 else:
@@ -453,6 +467,7 @@ def main():
     parser.add_argument('--user', default='root')
     parser.add_argument('--output', help='logs: target zip file')
     parser.add_argument('--force', action='store_true', help='install: write every file, also the unchanged ones')
+    parser.add_argument('--known-hosts', help='verify the SSH host key against this known_hosts file')
     # development only: key login and installing below a test directory (e.g. in a QNX build VM)
     parser.add_argument('--key', help=argparse.SUPPRESS)
     parser.add_argument('--root', default='', help=argparse.SUPPRESS)

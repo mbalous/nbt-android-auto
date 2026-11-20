@@ -379,12 +379,17 @@ struct Capture {
     int data;        // capture file or live FIFO
     int index;       // capture mode: .csv index
     int error;
+    bool stop_reader;
+    const char* reader_error;
+    unsigned read_size;
     uint64_t bytes;  // unpadded input bytes in live mode, bytes written in diagnostic mode
     unsigned frames, configs, frame_limit;
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     bool live, native_focus_pending;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false), native_focus_pending(false)
+    Capture() : socket(-1), data(-1), index(-1), error(0), stop_reader(false), reader_error(0),
+                read_size(NBT_CAPTURE_MAX_TRANSFER), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
+                live(false), native_focus_pending(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -645,14 +650,33 @@ void config(const uint8_t* p, size_t n, void* v)
 }
 
 // reader thread: USB -> socket pair (the session reads the other end)
+bool reader_stopping(Capture* c, const char* failure = 0)
+{
+    pthread_mutex_lock(&c->mutex);
+    const bool stop = c->stop_reader;
+    if (!stop && failure)
+        c->reader_error = failure;
+    pthread_mutex_unlock(&c->mutex);
+    return stop;
+}
+
 void* reader(void* v)
 {
     Capture* c = (Capture*)v;
-    unsigned char b[65536];
-    for (;;) {
-        unsigned n = sizeof(b);
-        if (!c->transfer(c->transport, 1, b, &n) || !n || n > sizeof(b) || !write_all(c->socket, b, n))
+    unsigned char b[NBT_CAPTURE_MAX_TRANSFER];
+    while (!reader_stopping(c)) {
+        unsigned n = c->read_size;
+        const bool ok = c->transfer(c->transport, 1, b, &n);
+        const char* failure = !ok ? "usb_in" : n > c->read_size ? "usb_in_invalid_size" : 0;
+        if (reader_stopping(c, failure) || failure)
             break;
+        // A successful zero-length USB packet contributes no bytes to the AA stream; it is not socket EOF.
+        if (!n)
+            usleep(1000);
+        else if (!write_all(c->socket, b, n)) {
+            reader_stopping(c, "usb_to_session_socket");
+            break;
+        }
     }
     shutdown(c->socket, SHUT_RDWR);
     return 0;
@@ -706,10 +730,11 @@ void* live_writer(void* v)
                 select(c->data + 1, 0, &set, 0, &t);
                 continue;
             }
+            const int error = k < 0 ? errno : 0;
+            printf("AA_LIVE_WRITER_FAILED errno=%d uptime_ms=%lld\n", error, now_ms());
             pthread_mutex_lock(&c->mutex);
             c->error = 1;
             pthread_mutex_unlock(&c->mutex);
-            printf("AA_LIVE_WRITER_FAILED errno=%d\n", errno);
             return 0;
         }
     }
@@ -717,9 +742,9 @@ void* live_writer(void* v)
 
 volatile sig_atomic_t live_stop = 0;
 
-void stop_live(int)
+void stop_live(int signo)
 {
-    live_stop = 1;
+    live_stop = signo;
 }
 
 // ===== iDrive controller input (live mode) =============================================================================
@@ -806,10 +831,11 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
 //
 // transfer: USB bulk transfer callback (direction 0 = to the phone, 1 = from the phone); context: its transport.
 // prefix:   capture mode file prefix (must be under /fs/ram3/nbt-aa- when running as root).
-// Returns 0 = session received valid config and video without a capture error, 2 = bad arguments / files, 3 = failure.
-extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* context, const char* prefix)
+// Returns 0 = session received valid config and video without a capture or pump error, 2 = bad arguments / files,
+// 3 = failure.
+extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* context, const char* prefix, unsigned read_size)
 {
-    if (!transfer || !prefix || !*prefix || strlen(prefix) > 200)
+    if (!transfer || !prefix || !*prefix || strlen(prefix) > 200 || !read_size || read_size > NBT_CAPTURE_MAX_TRANSFER)
         return 2;
     if (geteuid() == 0 && strncmp(prefix, "/fs/ram3/nbt-aa-", sizeof("/fs/ram3/nbt-aa-") - 1))
         return 2;
@@ -817,6 +843,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     Capture c;
     c.transfer = transfer;
     c.transport = context;
+    c.read_size = read_size;
     unsigned seconds = 15;
     const char* live_fifo = getenv("NBT_AA_LIVE_FIFO");
     const char* requested = getenv("NBT_AA_CAPTURE_SECONDS");
@@ -925,9 +952,11 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         return 3;
     }
     pthread_t thread, writer;
+    int thread_error;
     bool have_writer = false;
     if (c.live) {
-        if (pthread_create(&writer, 0, live_writer, &c)) {
+        if ((thread_error = pthread_create(&writer, 0, live_writer, &c)) != 0) {
+            printf("AA_VIDEO_CAPTURE_START_FAILED worker=live_writer rc=%d\n", thread_error);
             nbt::mediaout::stop();
             session.stop();
             aa_audio::shutdown();
@@ -937,7 +966,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         }
         have_writer = true;
     }
-    if (pthread_create(&thread, 0, reader, &c)) {
+    if ((thread_error = pthread_create(&thread, 0, reader, &c)) != 0) {
+        printf("AA_VIDEO_CAPTURE_START_FAILED worker=usb_reader rc=%d\n", thread_error);
         if (have_writer) {
             pthread_mutex_lock(&c.queue.m);
             c.queue.stop = true;
@@ -975,6 +1005,9 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
     // ByeByeResponse ends it.
     long long bye_until = 0;
+    const char* bye_reason = 0;
+    const char* stop_reason = start < 0 ? "clock_error" : "session_inactive";
+    bool pump_error = start < 0;
     // Freeze watch (user report: "the Android Auto screen freezes sometimes"): no new video frame for 15 s while the
     // page is on screen -> AA_STALL in this log and the flag file below; native_service saves an incident snapshot.
     // (The phone may also send nothing for a still screen, so this is evidence for the log, not an action.)
@@ -985,16 +1018,28 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // ---- main loop: socket pair -> USB, controller FIFO -> session, focus and shutdown handling ----
     while (start >= 0 && session.isActive()) {
         pthread_mutex_lock(&c.mutex);
-        const bool finished = c.error || c.frames >= c.frame_limit;
+        const bool output_error = c.error;
+        const bool frame_limit = c.frames >= c.frame_limit;
         pthread_mutex_unlock(&c.mutex);
-        const bool want_stop = live_stop || (!c.live && now_ms() - start >= seconds * 1000LL) || finished;
-        if (want_stop && !bye_until) {
-            session.postByeBye();
-            bye_until = now_ms() + 1000;
-            printf("AA_BYEBYE requested\n");
+        if (!bye_until) {
+            const int signo = live_stop;
+            if (signo)
+                bye_reason = "signal";
+            else if (output_error)
+                bye_reason = "capture_error";
+            else if (frame_limit)
+                bye_reason = "frame_limit";
+            else if (!c.live && now_ms() - start >= seconds * 1000LL)
+                bye_reason = "time_limit";
+            if (bye_reason) {
+                printf("AA_BYEBYE requested reason=%s signal=%d uptime_ms=%lld\n", bye_reason, signo, now_ms());
+                session.postByeBye();
+                bye_until = now_ms() + 1000;
+            }
         }
         if (bye_until && now_ms() >= bye_until) {
             printf("AA_BYEBYE no answer within 1 s\n");
+            stop_reason = "byebye_timeout";
             break;
         }
         if (c.live && !bye_until && now_ms() >= next_stall_check) {
@@ -1051,32 +1096,56 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(c.socket, &fds);
-        if (input >= 0)
+        if (input >= 0 && !bye_until)
             FD_SET(input, &fds);
         struct timeval timeout = {0, 100000};
         int ready = select((input > c.socket ? input : c.socket) + 1, &fds, 0, 0, &timeout);
         if (ready < 0 && errno == EINTR)
             continue;
-        if (ready < 0)
+        if (ready < 0) {
+            printf("AA_CAPTURE_PUMP_ERROR operation=select errno=%d\n", errno);
+            stop_reason = "socket_select";
+            pump_error = true;
             break;
-        if (ready && input >= 0 && FD_ISSET(input, &fds))
+        }
+        if (ready && input >= 0 && !bye_until && FD_ISSET(input, &fds))
             handle_input(input, lines, session);
         if (ready && FD_ISSET(c.socket, &fds)) { // session -> phone
-            unsigned char b[65536];
+            unsigned char b[NBT_CAPTURE_MAX_TRANSFER];
             ssize_t n = recv(c.socket, b, sizeof(b), 0);
-            if (n <= 0)
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0) {
+                if (n < 0) {
+                    printf("AA_CAPTURE_PUMP_ERROR operation=recv errno=%d\n", errno);
+                    pump_error = true;
+                }
+                stop_reason = n < 0 ? "socket_recv" : "session_socket_eof";
                 break;
+            }
             unsigned size = n;
-            if (!transfer(context, 0, b, &size) || size != (unsigned)n)
+            if (!transfer(context, 0, b, &size) || size != (unsigned)n) {
+                printf("AA_CAPTURE_PUMP_ERROR operation=usb_out requested=%u\n", (unsigned)n);
+                stop_reason = "usb_out";
+                pump_error = true;
                 break;
+            }
         }
     }
 
     // ---- shutdown ----
     if (input >= 0)
         close(input);
-    if (bye_until)
-        printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
+    pthread_mutex_lock(&c.mutex);
+    c.stop_reader = true;
+    if (c.reader_error) {
+        if (!pump_error)
+            stop_reason = c.reader_error;
+        pump_error = true;
+    }
+    pthread_mutex_unlock(&c.mutex);
+    printf("AA_VIDEO_CAPTURE_STOP reason=%s local_shutdown=%s uptime_ms=%lld\n",
+           stop_reason, bye_reason ? bye_reason : "none", now_ms());
     shutdown(c.socket, SHUT_RDWR);
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
@@ -1099,7 +1168,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     close(c.socket);
     close(c.data);
     close(c.index);
-    printf("AA_VIDEO_CAPTURE_END frames=%u configs=%u bytes=%llu invalid=%d no_display=1\n", c.frames, c.configs,
-           (unsigned long long)c.bytes, c.error);
-    return !c.error && c.frames && c.configs ? 0 : 3;
+    const int result = !pump_error && !c.error && c.frames && c.configs ? 0 : 3;
+    printf("AA_VIDEO_CAPTURE_END frames=%u configs=%u bytes=%llu invalid=%d no_display=1 result=%d\n", c.frames,
+           c.configs, (unsigned long long)c.bytes, c.error, result);
+    return result;
 }

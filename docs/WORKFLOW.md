@@ -1,6 +1,7 @@
 # Everyday workflow (Windows)
 
-These commands originate from Valinet's fork; the merged version has not yet been car-tested.
+These commands originate from Valinet's fork. See [the test checklist](../CAR-TEST-aa-dev.md) for the limited
+parked results and remaining validation.
 
 The commands used to build, install and debug this fork from a Windows laptop on the ENET cable. Run them in `cmd` in
 the repository folder.
@@ -38,10 +39,12 @@ python installer\make_payload.py --built build\qnx-build-<newest> --pem-dir .loc
 
 4. Install:
 ```
-python installer\nbt_aa_installer.py --cli install
+python installer\nbt_aa_installer.py --cli install --known-hosts <verified-known-hosts>
 ```
 Files already on the head unit with the same content are not written again (`same` in the output). To write
-everything anyway, add `--force`.
+everything anyway, add `--force`. Verify the head unit's host key independently before adding it to the known-hosts
+file. Without `--known-hosts`, the installer accepts an unknown key. See the [installer safety notes](../installer/README.md#safer-car-testing)
+before deploying; preflight writes test files and a failed installation may be partial.
 
 5. Reboot the head unit: Multimedia → Android Auto → **Restart system**, or from the laptop:
 ```

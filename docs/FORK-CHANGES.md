@@ -1,6 +1,7 @@
 # Changes in this fork
 
-This describes Valinet's fork before integration; the merged version has not yet been car-tested.
+This describes Valinet's fork before integration. See [the test checklist](../CAR-TEST-aa-dev.md) for the merged
+version's limited parked results.
 
 This fork ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)) builds on upstream
 [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) `main` at `12c8411` (2026-11-11). It was
