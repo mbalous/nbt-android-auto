@@ -555,6 +555,16 @@
       <focusEvent id="697" target="13"/>
       <focusEvent id="698" target="13"/>
       <focusEvent id="699" target="13"/>
+      <focusEvent id="700" target="10"/>
+      <focusEvent id="701" target="10"/>
+      <focusEvent id="702" target="10"/>
+      <focusEvent id="703" target="10"/>
+      <focusEvent id="704" target="10"/>
+      <focusEvent id="705" target="10"/>
+      <focusEvent id="706" target="10"/>
+      <focusEvent id="707" target="10"/>
+      <focusEvent id="708" target="10"/>
+      <focusEvent id="709" target="10"/>
     </events>
     <hmiStates>
       <hmiState id="10" textModel="3" text="Android Auto">

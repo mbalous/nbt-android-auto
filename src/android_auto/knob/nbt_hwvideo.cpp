@@ -189,13 +189,25 @@ int main(int argc, char** argv) {
         ++h;
         usleep(2000000);
     }
+    // No acknowledgement at all after three attempts: VideoApp did not take the connection, the page would stay black
+    // ("connected" but no picture). Leave cleanly; native_service starts nbt_hwvideo again a little later.
+    if (!g_stop && !g_ack060 && !g_ackC01) {
+        printf("[hw] VideoApp never acknowledged the video connection: giving up (native_service retries)\n");
+        dmShow(false, height);
+        if (g_hmi && g_blankHmi) g_setv(g_hmi, kHmiWindow, 1);
+        fflush(stdout);
+        _exit(5);
+    }
     printf("[hw] video connection requested (rows %d -> DisplayManager 800x%d, viewport %d,%d,%d,%d)\n", rows, height,
            vp[0], vp[1], vp[2], vp[3]);
     // apply display settings repeatedly during the first 12 s (the Cinemo window and the WAL video window appear only
     // when the decoder renders and the capture runs), then whenever the Android Auto page appears or disappears
     const long long t0 = nowMs();
     int shown = -1;
-    long long nextApply = t0 + 1000, hiddenSince = 0, nextSrcCheck = t0 + 8000;
+    long long nextApply = t0 + 1000, hiddenSince = 0, nextSrcCheck = t0 + 8000, nextPoll = t0 + 8000, lastShown = 0;
+    long long preemptedSince = 0;
+    int preemptedBy = 0;                                 // video source that took the sink from us (reverse camera, ...)
+    unlink("/fs/ram3/nbt-aa-preempted");
     while (!g_stop) {
         const long long t = nowMs();
         // hide only when the page has been away for 400 ms (BACK / side panels are put right back by the plugin)
@@ -203,6 +215,33 @@ int main(int argc, char** argv) {
         if (visible) hiddenSince = 0;
         else if (!hiddenSince) hiddenSince = t;
         if (!visible && shown == 1 && t - hiddenSince < 400) visible = true;
+        if (shown == 1) lastShown = t;
+        // Reverse gear (user report 2026-11-19): the rear-view camera takes VideoApp's sink and the HMI leaves the
+        // Android Auto page; after the camera the HMI did not come back to it. The sink source is now read every second
+        // also while the page is hidden: a source that took over within 3 s of our picture being in front is remembered
+        // for diagnostics. PDCStatus controls the actual return after the parking view closes.
+        if (!visible && t >= nextPoll) {
+            nextPoll = t + 1000;
+            const int src = g_curSrc;
+            if (src > 0 && src != 0x16 && !preemptedBy && t - lastShown < 3000) {
+                preemptedBy = src; preemptedSince = t;
+                printf("[hw] video source 0x%02X took the screen from Android Auto (camera?): resume when it goes\n", src);
+                FILE* f = fopen("/fs/ram3/nbt-aa-preempted", "w");
+                if (f) { fprintf(f, "%d\n", src); fclose(f); }
+            } else if (preemptedBy && src >= 0 && src != preemptedBy) {
+                // log only: the camera source can go while the parking view is still on screen (creeping forward after
+                // R -> D). The HMI plugin brings Android Auto back on the parking assistant's end (CDS PDCStatus 2).
+                printf("[hw] video source 0x%02X gone (now 0x%02X) after %lld ms (resume is left to the plugin's PDC end)\n",
+                       preemptedBy, src, t - preemptedSince);
+                preemptedBy = 0;
+                unlink("/fs/ram3/nbt-aa-preempted");
+            } else if (preemptedBy && t - preemptedSince > 600000) {
+                preemptedBy = 0;                         // 10 minutes: that was no reverse manoeuvre
+                unlink("/fs/ram3/nbt-aa-preempted");
+            }
+            most.send(req(aD8, 0xD8, 0xC05, 0x1, b, 0)); // Get CurrentVideoSource (answer -> g_curSrc)
+        }
+        if (visible && preemptedBy) { preemptedBy = 0; unlink("/fs/ram3/nbt-aa-preempted"); }
         if (visible && t >= nextSrcCheck) {
             nextSrcCheck = t + 5000;
             if (g_curSrc >= 0 && g_curSrc != 0x16) {
@@ -226,6 +265,7 @@ int main(int argc, char** argv) {
         usleep(100000);
     }
     // stop sequence
+    unlink("/fs/ram3/nbt-aa-preempted");
     walShow(false);
     dmShow(false, height);
     be16(b, h + 1); most.send(req(aD8, 0xD8, 0xC02, 0x6, b, 2)); usleep(300000);

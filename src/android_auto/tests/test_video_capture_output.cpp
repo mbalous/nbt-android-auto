@@ -4,6 +4,7 @@
 namespace aa_audio {
 bool setup(nbt::AASession&) { abort(); }
 void shutdown() { abort(); }
+void setVolume(int) { abort(); }
 }
 namespace nbt { namespace mediaout {
 void setConsumedCallback(ConsumedFn, void*) { abort(); }
@@ -11,6 +12,7 @@ bool start(const char*) { abort(); }
 void stop() { abort(); }
 void onAudio(uint8_t, const uint8_t*, size_t) { abort(); }
 void onState(uint8_t, bool, uint32_t, uint32_t) { abort(); }
+void setVolume(int) { abort(); }
 } }
 
 namespace {
@@ -118,7 +120,7 @@ void test_live_stream()
     c.live = true;
     config(kConfig, sizeof(kConfig), &c);
     video(0, kFrame, sizeof(kFrame), 42, &c);
-    require(c.frames == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
+    require(c.frames == 1 && c.received == 1 && c.configs == 1 && c.bytes == sizeof(kFrame) + sizeof(kConfig),
             "live summary counts source frames, configs and unpadded bytes");
 
     const uint8_t padded_frame[] = {

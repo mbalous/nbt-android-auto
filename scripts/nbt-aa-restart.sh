@@ -23,6 +23,9 @@ S=$D/restart-`date +%d%H%M%S`.txt
   echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e native -e decode -e hwvideo -e mm
   echo '--- system log'; sloginfo | tail -400
 } > $S 2>&1
+if test -e "$P/incident-logging"; then
+  sh "$P/incident.sh" user-restart 0 "${1:-service}" </dev/null >/dev/null 2>&1 &
+fi
 n=0
 for f in `ls -t $D/restart-*.txt`; do n=$((n+1)); if test $n -gt 5; then rm -f $f; fi; done
 if test -n "$1"; then rm -f anamorph center800 split800 classic; touch $1; fi

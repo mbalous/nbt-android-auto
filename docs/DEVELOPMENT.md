@@ -17,6 +17,10 @@ Private files belong in `.local/` and build output in `build/`; both are ignored
 
 ## Setting up QNX 6.5.0
 
+**No QNX licence?** [toolchain/README.md](../toolchain/README.md) builds the same programs with an open GCC 4.4.2
+toolchain in Docker (no SDP, no VM), including the HMI plugin (linked against stub HMI libraries). `accessory_window`
+is reused from the release. One command: `./flash-aa-open.sh --build-only`.
+
 1. Download **QNX 6.5.0** from QNX.
 2. Install it in a VM. This video shows everything you need, step by step:
    [QNX 6.5.0 setup on YouTube](https://www.youtube.com/watch?v=3yjVaIwzPsc&t=182s).

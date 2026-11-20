@@ -97,17 +97,21 @@ Off by default (software decoding). Applies from the next session: replug the ph
 | Hardware decoder off | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode"` |
 | Which one runs | `%CAR% "grep -h 'decoder:' /fs/ram3/nbt-aa-native/decoder-*.log"` |
 
-## Android Auto sound: USB or cable
+## Android Auto sound
 
-By default the phone's sound comes over USB into the car (source `f6`). To use the 3.5 mm cable on AUX instead:
+By default the phone's sound comes over USB into the car (source `f6`). The former `media-jack` mode is no longer
+supported; factory AUX is unchanged. Create `aa-audio` in the package directory to select the browser route instead.
 
 | What | Command |
 | --- | --- |
-| Cable (AUX) | `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/media-jack"` |
-| USB (default) | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/media-jack"` |
+| Browser route | `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/aa-audio"` |
+| f6 (default) | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/aa-audio"` |
 | What the session does with the sound | `%CAR% "grep -h AA_MEDIA_OUT /fs/ram3/nbt-aa-native/capture-*.log"` |
 
 Applies after **Restart Android Auto** (the service reads the file when it starts).
+
+Software volume is applied to media on both routes. `f6` may also be attenuated by the car, producing double
+attenuation; create `aa-volume-off` in the package directory to disable it. This integration is not car-tested.
 
 Navigation prompts while another source plays (radio, ...) cut in over connection `b8`. To turn that off (prompts only
 on Android Auto's own source): `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/prompts-off"`. What happened:

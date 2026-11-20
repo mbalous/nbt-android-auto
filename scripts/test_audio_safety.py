@@ -74,6 +74,9 @@ int A2I_Client_Out_Write(void *h, const void *b, unsigned long n, unsigned x) {
         cls.probe = cls.root / "probe"
         run(["c++", "-std=c++11", define, "-I" + str(audio.parent),
              str(SOURCE / "audio_a2i/asound_device.cpp"), str(probe), "-ldl", "-o", str(cls.probe)])
+        cls.media_gain = cls.root / "media_gain"
+        run(["c++", "-std=c++11", "-Wall", "-Wextra", "-I" + str(REFERENCE / "milestone-7/src"),
+             str(SOURCE / "tests/test_media_gain.cpp"), "-pthread", "-ldl", "-o", str(cls.media_gain)])
 
     @classmethod
     def tearDownClass(cls):
@@ -82,6 +85,9 @@ int A2I_Client_Out_Write(void *h, const void *b, unsigned long n, unsigned x) {
     def setUp(self):
         for item in self.runtime.iterdir():
             item.unlink()
+
+    def test_f6_media_volume(self):
+        run([str(self.media_gain)])
 
     def tool_call(self, op, conn="0xb8", reply=None):
         env = os.environ.copy()
@@ -167,7 +173,7 @@ int A2I_Client_Out_Write(void *h, const void *b, unsigned long n, unsigned x) {
         self.assertIn("test media=input_stereo_1 source=f6 prompts=0", output)
         (self.runtime / "media-jack").touch()
         output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()
-        self.assertIn("test media=(unset) source=bb prompts=0", output)
+        self.assertIn("test media=input_stereo_1 source=f6 prompts=0", output)
         (self.runtime / "media-jack").unlink()
         (self.runtime / "aa-audio").write_text("0xb8\n")
         output = run([str(self.cleanup)], cwd=self.runtime).stdout.decode()

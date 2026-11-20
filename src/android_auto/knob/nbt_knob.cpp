@@ -1,8 +1,8 @@
 // nbt_knob - iDrive controller -> Android Auto key events for the original NBT (in the installed package, car-proven
 // since 2026-11-07).
 //
-// Observe-only: it registers one DSI client on the MOST server and receives COPIES of the controller's status messages
-// (FBlock 0xE5). Nothing is ever sent to the controller or any other function block; the HMI keeps receiving every event.
+// It registers one DSI client on the MOST server and receives COPIES of controller status messages.
+// iDrive still receives the original events; selected controller and source commands are also sent.
 // The MOST/DSI client and the decoder are the NBT-AAD reference code (src/android_auto/knob/ref, PolyForm Noncommercial,
 // notices kept), adapted for this NBT: libsys_dsi_colibry.so.3, MOSTSubSystemIntel.DSYSMOSTServer 4.4.
 //
@@ -46,22 +46,7 @@
 // iDrive alone. Source from the C03 status below (asked for at start); still unknown = treated as AUX.
 // NBT_WHEEL_AUX_ONLY=0: always forward, as before.
 //
-// AUX source + Android Auto in front (2026-11-12, user: phone audio over AUX; favourite button 7 = the AUX page, which
-// switches the source; favourite button 8 = the Android Auto entry, which leads straight to the picture while the
-// session runs): when the first session of this service is running, nbt_knob presses favourite 7, waits 1.5 s, then
-// presses favourite 8. So the car starts into Android Auto with AUX as the source. Later sessions (replug, drop-out)
-// press nothing. Car trace 2026-11-12: favourite keypad = FBlock 15 instance 0C fkt C02 op Status, from 3002 to the
-// HMI, 8 bytes = one per button, byte N-1: 02 -> 01 (~110 ms) -> 00 (~60 ms). The HMI's address is the destination of
-// the controller's periodic E5/0F C06 (every 2 s). NBT_AUX_FAVORITE / NBT_AA_FAVORITE = button 1..8, 0 = off
-// (defaults 7 / 8: what these buttons hold in THIS car; a favourite can also hold a phone number).
-// 2026-11-13 (user): only favourite 8, as soon as the session runs - AUX is usually the source already, and another
-// source may be wanted. NBT_AUX_FAVORITE now defaults to 0 (set it to 7 for the old AUX press).
-// Switch (2026-11-12, "Start at boot" in the Android Auto menu): only once per boot (marker /fs/ram3/nbt-aa-fav-done,
-// so restarting Android Auto presses nothing), and not while the file start-at-boot.off exists in the package
-// (/var/opt/hmi/data/rw/NbtAndroidAutoRT; the menu creates / deletes it, read when the session starts).
-// 2026-11-17: no favourite button any more (user: free favourite 8). nbt_knob creates /fs/ram3/nbt-aa-show and the HMI
-// plugin brings the picture to the front with its focus event (car 2026-11-17: works while another screen is in front).
-// The favourite code stays for NBT_AUX_FAVORITE (off by default).
+// Start at boot: once per boot, unless start-at-boot.off exists, request that the HMI shows Android Auto.
 //
 // Pause on source change (2026-11-12, user: phone audio over AUX; music should stop when iDrive switches away from AUX).
 // Car trace 2026-11-12 (AUX -> Bluetooth -> AUX -> Radio -> AUX): on every source switch 100E sends FBlock 03 inst 00
@@ -86,8 +71,7 @@
 // NBT_PLAY_AUX=0 off.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
 // 2026-11-18: with Android Auto sound in the car (aa_media_out) native_service sets NBT_AUX_SOURCE=f6 (main source
-// f6, io-amp input input_stereo_1) and NBT_AUX_OPENS_AA=0: everything above that says AUX then means f6, and iDrive's
-// own AUX stays factory. Without it (file media-jack) the Android Auto source is AUX, as before.
+// f6, io-amp input input_stereo_1): the legacy names above refer to f6. iDrive's own AUX stays factory.
 // NAV while Android Auto is on screen (user 2026-11-18, instead of a long NAV press): the source is not AUX -> switch
 // to AUX and start playback on the phone unless it already plays (or unless our earlier AUX-left pause is about to be
 // undone by the back-to-AUX resume); the source is AUX -> PLAY_PAUSE (85) to the phone. The show request still goes
@@ -320,8 +304,6 @@ bool sourceNotification(nbt::most::Client& most, bool set) {
     return ok;
 }
 
-long long g_ourSourceRequestMs = -100000;   // our own switch request: the AUX that follows is not the driver's
-bool g_auxOpensAa = true;
 // one ConnectionMaster command to 100E (car 2026-11-18): fkt 053 BuildHighSyncConnection / 054 Remove..., op 6
 // StartResultAck, data {handle hi, lo, connection hi, lo}. Returns the handle (0 = not sent).
 unsigned connectionCmd(nbt::most::Client& most, unsigned fkt, unsigned conn) {
@@ -339,7 +321,6 @@ unsigned connectionCmd(nbt::most::Client& most, unsigned fkt, unsigned conn) {
 
 // asks the source master 100E to switch to `source` (ConnectionMaster 053, see the header)
 bool requestSource(nbt::most::Client& most, unsigned source) {
-    g_ourSourceRequestMs = nowMs();
     const unsigned handle = connectionCmd(most, 0x053, source);
     printf("[Source] switch to %02X requested (handle %04X): %s\n", source, handle, handle ? "sent" : "FAILED");
     return handle != 0;
@@ -441,7 +422,6 @@ bool isMainSource(unsigned id) {
         if (kMainSources[i] == id) return true;
     return false;
 }
-int g_prevMain = -1;            // the last real main source (for "AUX chosen", which must look past an empty table)
 
 void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 2) return;
@@ -461,16 +441,6 @@ void onSource(const nbt::most::View& m, void*) {
         if (s >= 0) fprintf(f, "%04x\n", s); else fputs("none\n", f);
         fclose(f);
     }
-    const int prevMain = g_prevMain;
-    if (s >= 0) g_prevMain = s;
-    // AUX chosen in iDrive (user 2026-11-17: the AUX page is the phone's audio, show Android Auto instead): the driver
-    // switched to AUX (not our own request of the last 3 s) while a session runs -> show request to the HMI plugin.
-    // NBT_AUX_OPENS_AA=0 off.
-    if (g_auxOpensAa && prevMain >= 0 && prevMain != (int)g_auxSource && s == (int)g_auxSource &&
-        nowMs() - g_ourSourceRequestMs > 3000 && sessionRunning()) {
-        if (FILE* f = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(f);
-        printf("[Source] AUX chosen in iDrive: Android Auto to the front (show request)\n");
-    }
     if (!g_auxPause || prev == -1) return;                // -1: the first status after start, nothing changed
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
         const int st = mediaState();
@@ -485,36 +455,11 @@ void onSource(const nbt::most::View& m, void*) {
     }
 }
 
-// --- AUX source through a favourite button (see the header) ---
-uint16_t g_hmiDev = 0, g_hmiSrc = 0;   // from the controller's periodic E5/0F C06: HMI address, controller-side sender
-void onE5Periodic(const nbt::most::View& m, void*) {
-    pthread_mutex_lock(&g_backMx);
-    g_hmiDev = m.dst; g_hmiSrc = m.src;
-    pthread_mutex_unlock(&g_backMx);
-}
-
-nbt::most::Msg favMsg(uint16_t src, uint16_t dst, unsigned button, uint8_t v) {
-    nbt::most::Msg m;
-    m.txType = 0; m.varTag = 1; m.varVal = 0;      // as nbt_hwvideo sends (vehicle-tested)
-    m.dst = dst; m.src = src; m.fblock = 0x15; m.inst = 0x0C; m.fkt = 0xC02; m.opType = 0xC; m.hdrTag = 0xFFFFu;
-    m.data.assign(8, 0);
-    m.data[button - 1] = v;
-    return m;
-}
-
-unsigned g_auxButton = 7, g_aaButton = 8;
+unsigned g_aaButton = 8;
 bool g_favDone = false;          // once per service life
 long long g_favNextCheck = 0;
 const char* const kFavDone = "/fs/ram3/nbt-aa-fav-done";                          // once per boot
 const char* const kFavOff = "/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";   // menu: "Start at boot" off
-
-void pressFavourite(nbt::most::Client& most, uint16_t src, uint16_t dst, unsigned button) {
-    most.send(favMsg(src, dst, button, 2));
-    usleep(110000);
-    most.send(favMsg(src, dst, button, 1));
-    usleep(60000);
-    most.send(favMsg(src, dst, button, 0));
-}
 
 // main thread, every 200 ms until done: the service's public state
 // --- phone starts playing while the source is not AUX: switch the source to AUX (see the header) ---
@@ -560,6 +505,7 @@ void navAudioIfNeeded(nbt::most::Client& most) {
 }
 
 void favouritesIfNeeded(nbt::most::Client& most) {
+    (void)most;
     if (g_favDone) return;
     const long long now = nowMs();
     if (now < g_favNextCheck) return;
@@ -571,19 +517,10 @@ void favouritesIfNeeded(nbt::most::Client& most) {
     fclose(f);
     buf[n] = 0;
     if (!strstr(buf, "state=running")) return;
-    pthread_mutex_lock(&g_backMx);
-    const uint16_t dst = g_hmiDev, src = g_hmiSrc;
-    pthread_mutex_unlock(&g_backMx);
-    if (g_auxButton && (!dst || !src)) return;                    // HMI address not known yet (favourite only)
     g_favDone = true;
     if (access(kFavDone, F_OK) == 0) { printf("[Knob] start at boot: already done in this boot\n"); return; }
     if (FILE* m = fopen(kFavDone, "w")) fclose(m);
     if (access(kFavOff, F_OK) == 0) { printf("[Knob] start at boot: switched off in the menu\n"); return; }
-    if (g_auxButton) {
-        printf("[Knob] session running: favourite %u (AUX) %04X->%04X\n", g_auxButton, src, dst);
-        pressFavourite(most, src, dst, g_auxButton);
-        if (g_aaButton) usleep(1500000);                          // let iDrive switch the source first
-    }
     if (g_aaButton) {
         if (FILE* s = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(s);   // the HMI plugin shows the picture (see the header)
         printf("[Knob] start at boot: Android Auto to the front (show request)\n");
@@ -696,6 +633,98 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
     forward(line, (size_t)n);
 }
 
+// ---- steering wheel: volume and media keys (user report 2026-11-19: "steering-mounted controls for audio and track
+// change don't work") ---------------------------------------------------------------------------------------------------
+// Volume: Android Auto sound plays on the browser connection, which the car's master volume does not attenuate. The car's
+// master level is observed (FBlock 0x20 AudioMaster inst 00, fkt 0xC08 Status, 5 bytes 01 00 LEVEL 00 MAX; car-verified
+// in NBT-AAD car/volume_level.hpp: one message ~6 ms after each steering-wheel volume step) and sent to the session as
+// "V <percent> 0", which sets the Android Auto media gain. Copies only: the HMI still draws its own volume bar.
+// The last level is also kept in volume (RAM) so a new session starts at the right volume.
+const char* const kRouteBuilt = "/fs/ram3/nbt-aa-native/audio-route.built";
+const char* const kVolumeFile = "/fs/ram3/nbt-aa-native/volume";
+int g_volLevel = -1, g_volMax = -1;
+uint32_t g_volMs = 0;
+void onVolume(const nbt::most::View& m, void*) {
+    // main volume only (inst 00): other instances (rear-seat headphones of the 6FH entertainment, call volume, ...) must
+    // not change the Android Auto gain. Logged once each so the car log shows them.
+    static unsigned otherLogged = 0;
+    if (m.inst != 0x00) {
+        if (otherLogged < 5 && m.len >= 5) { ++otherLogged; printf("[Volume] 20/%02X level %u/%u ignored (not the main volume)\n", m.inst, m.data[2], m.data[4]); }
+        return;
+    }
+    if (m.len < 5) return;
+    const int lv = m.data[2], mx = m.data[4];
+    if (mx <= 0 || lv > mx) return;
+    if (lv == g_volLevel && mx == g_volMax && m.rxMs - g_volMs < 40) return;   // the same step, repeated within ms
+    g_volLevel = lv; g_volMax = mx; g_volMs = m.rxMs;
+    const int pct = lv * 100 / mx;
+    char line[32];
+    int n = snprintf(line, sizeof(line), "V %d 0\n", pct);
+    printf("[Volume] car level %d/%d -> Android Auto %d%%\n", lv, mx, pct);
+    forward(line, (size_t)n);
+    FILE* f = fopen("/fs/ram3/nbt-aa-native/volume.tmp", "w");
+    if (f) { fprintf(f, "%d\n", pct); fclose(f); rename("/fs/ram3/nbt-aa-native/volume.tmp", kVolumeFile); }
+}
+
+// Track keys: the steering-wheel buttons arrive on FBlock 0x15 (MFL) inst 02 (voice button fkt 0x512 and volume
+// fkt 0x401 are known; the skip keys' function ids are not yet known for this car). Every other 0x15 message is logged
+// (first 300) so one short drive with the button pressed shows the ids, and mfl.map in the package directory maps them:
+//   <fkt hex> <first data byte hex> <Android keycode>     e.g.  "0402 01 87"  (87 NEXT, 88 PREVIOUS, 85 PLAY/PAUSE)
+// A mapped media key is sent to the phone as a key tap only while Android Auto is the car's audio source (audio route
+// built); otherwise the button stays with iDrive alone (the phone already gets Bluetooth AVRCP in Bluetooth mode).
+// Call keys (5 CALL, 6 ENDCALL) and 84 (Assistant) are sent whenever Android Auto runs. They are copies: iDrive still
+// gets the button, and its Bluetooth hands-free answers / ends the call itself, so map them only if that does not work.
+struct MflKey { unsigned fkt, value, keycode; };
+MflKey g_mfl[16];
+int g_mflN = 0;
+unsigned g_mflLogged = 0;
+void loadMflMap() {
+    FILE* f = fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/mfl.map", "r");
+    if (!f) { printf("[MFL] no mfl.map: steering-wheel track keys only logged\n"); return; }
+    char l[96];
+    while (g_mflN < 16 && fgets(l, sizeof(l), f)) {
+        unsigned a, b, c;
+        if (l[0] == '#' || sscanf(l, "%x %x %u", &a, &b, &c) != 3) continue;
+        if (c != 85 && c != 87 && c != 88 && c != 5 && c != 6 && c != 84) {   // 126 / 127 dropped sessions
+            printf("[MFL] keycode %u not allowed\n", c);
+            continue;
+        }
+        g_mfl[g_mflN].fkt = a; g_mfl[g_mflN].value = b; g_mfl[g_mflN].keycode = c; ++g_mflN;
+        printf("[MFL] fkt %03X value %02X -> Android key %u\n", a, b, c);
+    }
+    fclose(f);
+}
+void onMfl(const nbt::most::View& m, void*) {
+    if (m.fkt == 0x512 || m.fkt == 0x401) return;          // voice button (ccs_input) and volume (level above)
+    if (m.inst == 0x02 && m.op == 0xC && (m.fkt == 0x400 || m.fkt == 0xC30 || m.fkt == 0xC31)) {
+        onWheel(m, NULL);
+        return;
+    }
+    if (g_mflLogged < 300) {
+        ++g_mflLogged;
+        printf("[MFL] 15/%02X fkt=%03X op=%X len=%u:", m.inst, m.fkt, m.op, (unsigned)m.len);
+        for (size_t i = 0; i < m.len && i < 12; ++i) printf(" %02x", m.data[i]);
+        printf("\n");
+    }
+    if (m.op != 0xC || !m.len) return;                      // Status only
+    for (int i = 0; i < g_mflN; ++i) {
+        if (g_mfl[i].fkt != m.fkt || g_mfl[i].value != m.data[0]) continue;
+        const bool media = g_mfl[i].keycode != 5 && g_mfl[i].keycode != 6 && g_mfl[i].keycode != 84;
+        if (media && access(kRouteBuilt, F_OK) != 0 &&
+            !(g_wheelAuxOnly && g_lastSource == (int)g_auxSource && sessionRunning())) return;
+        static unsigned lastFkt = 0, lastInst = 0, lastValue = 0;
+        static long long lastMs = 0;
+        const long long t = nowMs();
+        if (m.fkt == lastFkt && m.inst == lastInst && m.data[0] == lastValue && t - lastMs < 40) return;
+        lastFkt = m.fkt; lastInst = m.inst; lastValue = m.data[0]; lastMs = t;
+        char line[48];
+        int n = snprintf(line, sizeof(line), "K %u 1\nK %u 0\n", g_mfl[i].keycode, g_mfl[i].keycode);
+        printf("[MFL->AA] key %u\n", g_mfl[i].keycode);
+        forward(line, (size_t)n);
+        return;
+    }
+}
+
 // --trace: observe-only log of EVERY MOST message this client receives (header + first 48 payload bytes), to learn what the
 // HMI sends to VideoApp's VideoConnectionMaster / VideoSink when a stock video page opens. Nothing is ever sent.
 unsigned g_traced = 0;
@@ -788,23 +817,29 @@ int main(int argc, char** argv) {
     setenv("NBT_KEY_NAV", "0", 0);
     setenv("NBT_KEY_MAP", "0", 0);
 
+    // Steering-wheel voice button: a long press (>= 750 ms) also sends the Assistant key (84) to the phone when the
+    // package folder has ptt-assistant. Off by default: iDrive's own long press already starts the phone's voice
+    // assistant over Bluetooth, and both together would start it twice.
+    if (!access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/ptt-assistant", F_OK)) setenv("NBT_PTT_ASSISTANT", "1", 1);
     static nbt::most::Client most;
     static nbt::car::CcsInput ccs;
     if (!ccs.attach(most, nbt::car::readCcsConfig(), &onKnob, NULL)) return 3;
     if (!most.addRoute(0xE5, 0x01, 0xC20, 0xC, &onC20, NULL)) printf("[Knob] no room for the split-screen BACK route\n");
     g_wheelUp = wheelKey("NBT_WHEEL_UP", 87); g_wheelDown = wheelKey("NBT_WHEEL_DOWN", 88); g_wheelPush = wheelKey("NBT_WHEEL_PUSH", 85);
-    if (!most.addRoute(0x15, 0x02, nbt::most::kAny, 0xC, &onWheel, NULL)) printf("[Knob] no room for the steering wheel route\n");
-    g_auxButton = wheelKey("NBT_AUX_FAVORITE", 0);
+    if (!trace && access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/wheel-off", F_OK) != 0) {
+        loadMflMap();
+        if (!most.addRoute(0x15, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onMfl, NULL))
+            printf("[Knob] no room for the steering wheel route\n");
+    }
+    if (!trace && !most.addRoute(0x20, nbt::most::kAny, 0xC08, nbt::most::kOpStatus, &onVolume, NULL))
+        printf("[Knob] no room for the volume route\n");
     g_aaButton = wheelKey("NBT_AA_FAVORITE", 1);        // now only on (show request) / 0 = off
-    if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (trace) g_aaButton = 0;
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
-    g_auxOpensAa = wheelKey("NBT_AUX_OPENS_AA", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_navAudio = wheelKey("NBT_NAV_AUDIO", 1) != 0 && !trace;
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
-    if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
         const char* v = getenv("NBT_AUX_SOURCE");
         if (v && *v) g_auxSource = (unsigned)strtoul(v, 0, 16) & 0xFF;

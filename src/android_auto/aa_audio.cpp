@@ -11,7 +11,9 @@
 #include "audio/browser_audio.hpp"
 #include "audio/config.hpp"
 #include "audio/mic_uplink.hpp"
+#include "volume.hpp"
 #include <stdio.h>
+#include <stdlib.h>
 
 namespace {
 
@@ -70,10 +72,33 @@ bool setup(nbt::AASession& session)
     session.setAudioStateCallback(on_state, 0);
     g_audio->start();
     g_audio->onSessionStarted();
+    {
+        // start at the car's last known volume (nbt_knob keeps it); without it the gain stays at 0 dB until the next step
+        FILE* v = fopen("/fs/ram3/nbt-aa-native/volume", "r");
+        int pct;
+        if (v) {
+            if (fscanf(v, "%d", &pct) == 1)
+                setVolume(pct);
+            fclose(v);
+        }
+    }
     printf("AA_AUDIO browser mode: connection 0x%x%s, acks %s, underflow reports %s\n", (unsigned)cfg.conn,
            cfg.conn ? "" : " (not routed: plays only if the car already listens to input_stereo_3)",
            cfg.defer_acks ? "once played" : "on arrival", cfg.underflow_reports ? "on" : "off");
     return true;
+}
+
+void setVolume(int percent)
+{
+    const char* off = getenv("NBT_AA_VOLUME");
+    if (!g_audio || (off && off[0] == '0'))
+        return;
+    percent = nbt::volumeClampPct(percent);
+    const int db = nbt::volumePctToDb(percent);
+    // 0 % is silence (the car at volume 0), not just -40 dB
+    const float gain = percent ? nbt::volumeDbToGain(db) : 0.0f;
+    g_audio->setMediaGain(gain);
+    printf("AA_AUDIO volume %d%% -> %d dB\n", percent, db);
 }
 
 void shutdown()

@@ -326,6 +326,32 @@ bool aaRunning() {
     char buf[160]; size_t n = fread(buf, 1, sizeof(buf) - 1, f); fclose(f); buf[n] = 0;
     return strstr(buf, "state=running") != 0;
 }
+bool aaAudioActive() {
+    if (access("/fs/ram3/nbt-aa-native/audio-route.built", F_OK) == 0) return true;
+    FILE* f = fopen("/fs/ram3/nbt-aa-source", "r");
+    if (!f) return false;
+    unsigned source = 0;
+    const bool active = fscanf(f, "%x", &source) == 1 && source == 0xf6;
+    fclose(f);
+    return active;
+}
+// now playing, written by the AA session (patches/nbt-fork-media-keys-nowplaying.patch): state=, song=, artist=
+struct NowPlaying { int state; std::string song, artist; };
+bool readNowPlaying(NowPlaying& np) {
+    FILE* f = fopen("/fs/ram3/nbt-aa-native/nowplaying", "r");
+    if (!f) return false;
+    np.state = 0; np.song.clear(); np.artist.clear();
+    char line[300];
+    while (fgets(line, sizeof(line), f)) {
+        size_t l = strlen(line);
+        while (l && (line[l - 1] == '\n' || line[l - 1] == '\r')) line[--l] = 0;
+        if (!strncmp(line, "state=", 6)) np.state = atoi(line + 6);
+        else if (!strncmp(line, "song=", 5)) np.song = line + 5;
+        else if (!strncmp(line, "artist=", 7)) np.artist = line + 7;
+    }
+    fclose(f);
+    return true;
+}
 std::string unitText(int u) {
     switch (u) { case 1: return "m"; case 2: case 3: return "km"; case 4: case 5: return "mi"; case 6: return "ft"; case 7: return "yd"; default: return ""; }
 }
@@ -747,6 +773,14 @@ int main(int argc, char** argv) {
     int drawn = -1000; long long drawnAngle = -999; std::string drawnLanes;
     std::string shownStreet = "\x01", shownDist = "\x01", shownUnit = "\x01", shownShield;
     int lastBar = -1; unsigned lastBmw = 0;
+    // Track line (user report 2026-11-19: the current Android Auto track did not show in the HUD). While Android Auto is
+    // the car's audio source and plays, and no navigation (Android Auto's or iDrive's) uses the guidance area, a new title
+    // is shown for 8 s in the top text line, like iDrive's own track pop-up. File no-hud-track in the package switches
+    // it off. Same car-verified commands as the guidance (204 visibility, 210 text).
+    const bool trackOn = access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/no-hud-track", F_OK) != 0;
+    bool trackShown = false;
+    long long trackUntil = 0, nextTrackRead = 0;
+    std::string lastTrack;
     while (!g_stop && (!seconds || nowMs() - t0 < seconds * 1000LL)) {
         const long long t = nowMs();
         Nav n;
@@ -764,6 +798,7 @@ int main(int argc, char** argv) {
         if (g_bmwResults != lastBmw) { if (!bmw || shown) printf("[cluster] iDrive navigation draws: yielding\n"); lastBmw = g_bmwResults; }
         const bool want = !bmw && fresh && (n.status == 1 || n.status == 3) && (demo || aaRunning());
         if (want && !shown) {
+            trackShown = false;                          // the guidance takes the area (and the text line) over
             printf("[cluster] show (AA navigation active)\n");
             visible(kOther, false); clearInst(kDraw);
             visible(kLanesAlt, false); clearInst(kLanes);
@@ -828,6 +863,25 @@ int main(int argc, char** argv) {
                 visible(kBar, false); visible(kArea, false);
             } else printf("[cluster] handing the cluster to the iDrive navigation\n");
             shown = false;
+        }
+        if (trackOn && !demo && !shown && t >= nextTrackRead) {
+            nextTrackRead = t + 1000;
+            NowPlaying np;
+            const bool playing = readNowPlaying(np) && np.state == 2 && !np.song.empty() && aaAudioActive() && aaRunning();
+            const std::string key = np.song + "\x01" + np.artist;
+            if (playing && !bmw && key != lastTrack) {
+                std::string line = fitStreet(toIso(np.song));
+                printf("[cluster] track: %s\n", line.c_str());
+                visible(kArea, true); visible(kStreet, true);
+                text(kStreet, line);
+                trackShown = true; trackUntil = t + 8000;
+            }
+            if (playing) lastTrack = key;
+        }
+        if (trackShown && !shown && (t >= trackUntil || bmw)) {
+            // iDrive's own navigation took over: its street text is already there, never blank it
+            if (!bmw) { text(kStreet, ""); visible(kStreet, false); visible(kArea, false); }
+            trackShown = false;
         }
         usleep(250000);
     }

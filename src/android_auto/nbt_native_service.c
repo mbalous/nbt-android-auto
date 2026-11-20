@@ -21,7 +21,6 @@
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
  *   bt-audio    Bluetooth sound instead of Android Auto sound
- *   media-jack  phone jack / AUX sound
  *   aa-audio    browser audio route instead of the default f6 media source (optional connection id)
  *   prompts-off disable prompts over other car sources in f6 mode
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
@@ -42,7 +41,12 @@
 #include <string.h>
 #include <time.h>
 
+#include "service_lock.h"
+
 #define RUNTIME_DIR "/fs/ram3/nbt-aa-native"
+/* the package folder on flash: switch and config files the user creates live here (native_service itself runs in
+ * RUNTIME_DIR, so relative names there would never see them) */
+#define PKG_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT/"
 #define HMI_STATE_FILE "/fs/ram3/nbt-aa-state"
 #define HMI_REQUEST_FILE "/fs/ram3/nbt-aa-request"
 #define CINEMO_LIBRARY_PATH "/opt/mm/lib/cinemo:/opt/mm/lib:/lib:/usr/lib"
@@ -64,24 +68,21 @@ static long long ms(void)
 }
 
 /* Default to the f6 main source and mediaout mixer. aa-audio selects the alternative BrowserAudio route;
- * bt-audio and media-jack override both. A failed output or pending browser route falls back on the next session.
+ * bt-audio overrides both. A failed output or pending browser route falls back on the next session.
  * The knob reads its environment only at startup; its mode is tracked so it can be restarted between sessions. */
 static int audio_knob_mode = -1;
 static void set_audio_mode(void)
 {
     static int saved;
-    static char *source, *opens, *play, *nav, *pause, *wheel, *media, *prompt, *prompt_conn;
+    static char *play, *nav, *pause, *wheel, *media, *prompt, *prompt_conn;
     FILE* f;
     char line[32] = "";
     char* end = 0;
     unsigned long conn = 0xb8;
     int explicit_file = 0;
-    int jack = !access("media-jack", F_OK);
     const char* why = 0;
     if (!saved) {
 #define SAVE_AUDIO_ENV(var, name) do { const char* v = getenv(name); if (v) var = strdup(v); } while (0)
-        SAVE_AUDIO_ENV(source, "NBT_AUX_SOURCE");
-        SAVE_AUDIO_ENV(opens, "NBT_AUX_OPENS_AA");
         SAVE_AUDIO_ENV(play, "NBT_PLAY_AUX");
         SAVE_AUDIO_ENV(nav, "NBT_NAV_AUDIO");
         SAVE_AUDIO_ENV(pause, "NBT_AUX_PAUSE");
@@ -92,9 +93,7 @@ static void set_audio_mode(void)
 #undef SAVE_AUDIO_ENV
         saved = 1;
     }
-    if (jack)
-        why = "media-jack switch";
-    else if (!access("bt-audio", F_OK))
+    if (!access("bt-audio", F_OK))
         why = "bt-audio switch";
     else if (!access("audio-output.failed", F_OK))
         why = "audio output failed earlier (audio-output.failed)";
@@ -109,8 +108,15 @@ static void set_audio_mode(void)
                 p++;
             if (*p && *p != '\n' && *p != '\r') {
                 unsigned long v = strtoul(p, &end, 0);
-                if (end != p && v <= 0xffff && (!*end || *end == '\n' || *end == '\r'))
-                    conn = v;
+                /* only 0 (unrouted) or a browser connection 0xb8..0xba: anything else (e.g. 0xf6 left behind by the
+                 * closed v0.9.0 package) is refused by audioconn, which marked the route failed and silently moved
+                 * every later session to Bluetooth */
+                if (end != p && (!*end || *end == '\n' || *end == '\r')) {
+                    if (v == 0 || (v >= 0xb8 && v <= 0xba))
+                        conn = v;
+                    else
+                        printf("audio: aa-audio connection 0x%lx ignored (only 0xb8..0xba), using 0xb8\n", v);
+                }
             }
         }
         fclose(f);
@@ -134,8 +140,7 @@ static void set_audio_mode(void)
         else
             printf("audio: prompts over other sources disabled\n");
         setenv("NBT_PROMPT_CONN", prompts ? (prompt_conn ? prompt_conn : "b8") : "0", 1);
-        setenv("NBT_AUX_SOURCE", source ? source : "f6", 1);
-        setenv("NBT_AUX_OPENS_AA", opens ? opens : "0", 1);
+        setenv("NBT_AUX_SOURCE", "f6", 1);
         setenv("NBT_PLAY_AUX", play ? play : "1", 1);
         setenv("NBT_NAV_AUDIO", nav ? nav : "1", 1);
         setenv("NBT_AUX_PAUSE", pause ? pause : "1", 1);
@@ -154,7 +159,7 @@ static void set_audio_mode(void)
             why = "no audioconn program";
     }
     if (why) {
-        printf("audio: %s (%s)\n", jack ? "phone jack" : "Bluetooth", why);
+        printf("audio: Bluetooth (%s)\n", why);
         setenv("NBT_AUDIO_MODE", "bt", 1);
         setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
     } else {
@@ -168,13 +173,12 @@ static void set_audio_mode(void)
             setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
     }
     setenv("NBT_PROMPT_CONN", "0", 1);
-    setenv("NBT_AUX_SOURCE", jack && source ? source : "bb", 1);
-    setenv("NBT_AUX_OPENS_AA", jack ? (opens ? opens : "1") : "0", 1);
-    setenv("NBT_PLAY_AUX", jack ? (play ? play : "1") : "0", 1);
-    setenv("NBT_NAV_AUDIO", jack ? (nav ? nav : "1") : "0", 1);
-    setenv("NBT_AUX_PAUSE", jack ? (pause ? pause : "1") : "0", 1);
-    setenv("NBT_WHEEL_AUX_ONLY", jack ? (wheel ? wheel : "1") : "0", 1);
-    audio_knob_mode = jack ? 2 : 0;
+    setenv("NBT_AUX_SOURCE", "bb", 1);
+    setenv("NBT_PLAY_AUX", "0", 1);
+    setenv("NBT_NAV_AUDIO", "0", 1);
+    setenv("NBT_AUX_PAUSE", "0", 1);
+    setenv("NBT_WHEEL_AUX_ONLY", "0", 1);
+    audio_knob_mode = 0;
 }
 
 /* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
@@ -216,11 +220,113 @@ static void audio_route_cleanup(void)
     audio_route_cleanup_impl(0);
 }
 
+/* ---- persistent event log ------------------------------------------------------------------------------------------
+ * /fs/ram3 is lost on every head-unit restart, so after an iDrive reboot nothing showed what happened before it. A few
+ * lines per session (start, end, how long, why) plus the tail of the HMI plugin's log are appended to the package
+ * directory on flash. Bounded: at 128 KB the file is moved to events.log.1 (one generation kept). Written only on
+ * session start/end and every 5 minutes while a session runs, so flash wear stays negligible. */
+#define PERSIST_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
+#define PERSIST_LOG PERSIST_DIR "/events.log"
+
+static void plog_rotate(void)
+{
+    struct stat st;
+    if (!stat(PERSIST_LOG, &st) && st.st_size > 128 * 1024)
+        rename(PERSIST_LOG, PERSIST_LOG ".1");
+}
+
+static void plog_line(const char* fmt, const char* a, unsigned session)
+{
+    FILE* f;
+    time_t now = time(0);
+    char when[32];
+    if (access(PERSIST_DIR "/incident-logging", F_OK)) return;
+    plog_rotate();
+    f = fopen(PERSIST_LOG, "a");
+    if (!f)
+        return;
+    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(f, "%s up=%llds session=%u ", when, ms() / 1000, session);
+    fprintf(f, fmt, a ? a : "");
+    fputc('\n', f);
+    fclose(f);
+}
+
+/* the last 3 KB of a RAM log, framed, into the persistent log */
+static void plog_tail(const char* path, const char* label)
+{
+    FILE *in, *out;
+    char buf[3072];
+    size_t n;
+    long size;
+    if (access(PERSIST_DIR "/incident-logging", F_OK)) return;
+    in = fopen(path, "r");
+    if (!in)
+        return;
+    fseek(in, 0, SEEK_END);
+    size = ftell(in);
+    fseek(in, size > (long)sizeof(buf) ? size - (long)sizeof(buf) : 0, SEEK_SET);
+    n = fread(buf, 1, sizeof(buf), in);
+    fclose(in);
+    plog_rotate();
+    out = fopen(PERSIST_LOG, "a");
+    if (!out)
+        return;
+    fprintf(out, "---- tail of %s ----\n", label);
+    fwrite(buf, 1, n, out);
+    if (n && buf[n - 1] != '\n')
+        fputc('\n', out);
+    fprintf(out, "---- end ----\n");
+    fclose(out);
+}
+
+/* ---- incidents ----------------------------------------------------------------------------------------------------
+ * Something went wrong: incident.sh (package folder) saves a snapshot (state, RAM log tails, our processes, the QNX
+ * system log) to incidents/ and an INCIDENT line to events.log, so the logs can be pulled later from the Mac
+ * (scripts/nbt_pull_logs.py) without anybody being connected when it happened. Detached (double fork: never blocks the
+ * service, no zombie). The same kind is recorded at most once per min_gap_ms. */
+static unsigned g_incident_session;
+
+static void incident(const char* kind, const char* detail, long long min_gap_ms)
+{
+    static char kinds[8][24];
+    static long long last[8];
+    static unsigned nkinds;
+    unsigned i;
+    long long now = ms();
+    pid_t p;
+    if (access(PERSIST_DIR "/incident-logging", F_OK)) return;
+    for (i = 0; i < nkinds; ++i)
+        if (!strcmp(kinds[i], kind))
+            break;
+    if (i < nkinds && now - last[i] < min_gap_ms)
+        return;
+    if (i == nkinds && nkinds < 8)
+        snprintf(kinds[nkinds++], sizeof(kinds[0]), "%s", kind);
+    if (i < 8)
+        last[i] = now;
+    p = fork();
+    if (p == 0) {
+        if (fork() == 0) {
+            char session[16];
+            snprintf(session, sizeof(session), "%u", g_incident_session);
+            setpgid(0, 0);
+            execl("/bin/sh", "sh", PERSIST_DIR "/incident.sh", kind, session, detail ? detail : "", (char*)0);
+            _exit(127);
+        }
+        _exit(0);
+    }
+    if (p > 0)
+        while (waitpid(p, 0, 0) < 0 && errno == EINTR) {
+        }
+}
+
 /* ---- child processes ------------------------------------------------------------------------------------------- */
 
 typedef struct {
     pid_t pid; /* 0 = not running */
     int status;
+    const char* name; /* args[0], for incident reports */
 } Child;
 
 /* 1 while the child runs; reaps it (pid = 0) once it has ended */
@@ -234,6 +340,13 @@ static int alive(Child* c)
     if (r == c->pid) {
         c->pid = 0;
         c->status = s;
+        /* died by a signal we did not send (end() uses SIGTERM, then SIGKILL): a crash (SIGSEGV, SIGABRT, ...) */
+        if (WIFSIGNALED(s) && WTERMSIG(s) != SIGTERM && WTERMSIG(s) != SIGKILL) {
+            char d[96];
+            snprintf(d, sizeof(d), "%s died by signal %d", c->name ? c->name : "?", WTERMSIG(s));
+            plog_line("CRASH %s", d, g_incident_session);
+            incident("crash", d, 10000);
+        }
         return 0;
     }
     return r == 0;
@@ -260,7 +373,8 @@ static void end(Child* c)
 /* start args[0] in its own process group, stdin from input (or /dev/null), stdout+stderr to log (or /dev/null) */
 static Child spawn(char* const args[], const char* input, const char* log)
 {
-    Child c = {0, 0};
+    Child c = {0, 0, 0};
+    c.name = args[0];
     c.pid = fork();
     if (!c.pid) {
         int fd;
@@ -471,11 +585,11 @@ static int log_has(const char* path, const char* token)
     return hit;
 }
 
-/* USB reset of the phone through oneplus_native --reset (see oneplus_aoa.c); log of the last one in reset.log */
+/* USB reset of the phone; log of the last one in reset.log. */
 static void reset_phone(int bus, int device, int type, int n)
 {
     char bus_text[16], device_text[16];
-    char* args[] = {"./oneplus_native", "--reset", bus_text, device_text, 0};
+    char* args[] = {"./nbt_android_auto", "--reset", bus_text, device_text, 0};
     Child c;
     long long limit;
     snprintf(bus_text, sizeof(bus_text), "%d", bus);
@@ -533,19 +647,38 @@ static void hmi_visible(void)
     (void)r;
 }
 
+/* nbt_hwvideo for one session; viewport x,y,w,h on the 1280x480 display: centred (240,0) or left edge (0,0, iDrive
+ * stays visible). restart > 0: a later attempt in the same session (own log file). */
+static Child start_hwvideo(int center, int right, unsigned session, unsigned restart)
+{
+    char* args[] = {"./nbt_hwvideo", "--rows", "480", center ? "--viewport" : 0,
+                    right ? "0,0,800,480" : "240,0,800,480", right ? "--keep-hmi" : 0, 0};
+    char hwname[48];
+    Child c;
+    if (restart)
+        snprintf(hwname, sizeof(hwname), "hwvideo-%u.%u.log", session, restart);
+    else
+        snprintf(hwname, sizeof(hwname), "hwvideo-%u.log", session);
+    setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+    c = spawn(args, 0, hwname);
+    setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    return c;
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------------ */
 
 int main(int argc, char** argv)
 {
-    Child lease = {0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
-    Child http = {0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
-    Child decoder = {0, 0}; /* decode_runner -> NmeCmdLine */
-    Child frames = {0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
-    Child capture = {0, 0}; /* nbt_android_auto --capture-video: the Android Auto session */
-    Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
-    Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child lease = {0, 0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
+    Child http = {0, 0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
+    Child decoder = {0, 0, 0}; /* decode_runner -> NmeCmdLine */
+    Child frames = {0, 0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
+    Child capture = {0, 0, 0}; /* nbt_android_auto --capture-video: the Android Auto session */
+    Child knob = {0, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
+    Child hwv = {0, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
+    int recovered = 0; /* pid of a native_service whose stale lock we took over */
     long long absent_since = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
     unsigned session = 0;
@@ -556,11 +689,20 @@ int main(int argc, char** argv)
     signal(SIGTERM, stopped);
     signal(SIGINT, stopped);
     signal(SIGPIPE, SIG_IGN);
-    /* one instance only */
-    lock = open("service.lock", O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (lock < 0)
+    lock = acquire_service_lock(&recovered);
+    if (lock < 0) {
+        perror("native_service: cannot acquire service lock");
         return 2;
-    close(lock);
+    }
+    /* stale FIFOs of a killed instance would make mkfifo fail below */
+    unlink("annexb.fifo");
+    unlink("raw.fifo");
+    plog_line("service start%s", 0, 0);
+    if (recovered) {
+        char d[64];
+        snprintf(d, sizeof(d), "the previous native_service (pid %d) had died", recovered);
+        incident("service-recovered", d, 0);
+    }
     if (mkfifo("annexb.fifo", 0600) || mkfifo("raw.fifo", 0600))
         goto done;
     /* keep a reader on raw.fifo open so a writer (shared Cinemo service in the old PNG mode) never gets SIGPIPE */
@@ -574,6 +716,7 @@ int main(int argc, char** argv)
     setenv("NBT_AA_TLS_CERT", RUNTIME_DIR "/cert.pem", 1);
     setenv("NBT_AA_TLS_KEY", RUNTIME_DIR "/key.pem", 1);
     setenv("NBT_AA_TLS_CA", RUNTIME_DIR "/ca.pem", 1);
+    setenv("NBT_AA_TLS_ALLOW_DATE_ERRORS", access(PKG_DIR "tls-allow-date-errors", F_OK) ? "0" : "1", 1);
     /* Any phone: the phone's certificate must chain to ca.pem = Google Automotive Link root (valid until 2044), the root
      * behind every Android Auto phone; validity and key usage are still checked. No per-app leaf pin any more (the OnePlus
      * leaf sha256:893145f5... would break with another phone or an Android Auto app update). peer.pin restores a pin. */
@@ -608,6 +751,11 @@ int main(int argc, char** argv)
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     set_audio_mode();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* now playing (song / artist / state) for nbt_cluster's track line in the cluster / HUD */
+    setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);
+    unlink("nowplaying");
+    /* the car's master volume steers the Android Auto gain (nbt_knob -> "V" lines); aa-volume-off keeps 0 dB */
+    setenv("NBT_AA_VOLUME", access(PKG_DIR "aa-volume-off", F_OK) ? "1" : "0", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
     /* Old experimental mode: if shadow.path names a file under /fs/usb0/, nbt_live_file shadows that file with the live
@@ -747,6 +895,8 @@ int main(int argc, char** argv)
         if (attempts > 0) {
             if (resets >= 3) {
                 report("replug_required", session);
+                g_incident_session = session;
+                incident("replug", "3 USB resets did not bring the phone back", 600000);
                 sleep(2);
                 continue;
             }
@@ -792,6 +942,7 @@ int main(int argc, char** argv)
         report("connecting", session);
         ++attempts;
         ++session;
+        g_incident_session = session;
         report("starting_decoder", session);
         drain(guard);
         /* no leftover client of the shared io-nme from an earlier, abruptly ended session (only our own NmeCmdLine copy
@@ -838,15 +989,8 @@ int main(int argc, char** argv)
             }
             /* the decoder already crops to the content rows (-vr), so the window is the plain 800x480 output;
              * viewport x,y,w,h on the 1280x480 display: centred (240,0) or left edge (0,0, iDrive stays visible) */
-            if (hw && !stopping) {
-                char* args[] = {"./nbt_hwvideo", "--rows", "480", center ? "--viewport" : 0,
-                                right ? "0,0,800,480" : "240,0,800,480", right ? "--keep-hmi" : 0, 0};
-                char hwname[40];
-                snprintf(hwname, sizeof(hwname), "hwvideo-%u.log", session);
-                setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
-                hwv = spawn(args, 0, hwname);
-                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
-            }
+            if (hw && !stopping)
+                hwv = start_hwvideo(center, right, session, 0);
         }
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
@@ -875,13 +1019,52 @@ int main(int argc, char** argv)
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
             report("running", session);
+            plog_line("session running (phone %s)", getenv("NBT_PHONE_ID"), session);
             {
-                long long began = ms();
+                long long began = ms(), last_hwv = ms(), last_persist = ms();
+                unsigned hwv_restarts = 0;
+                const char* why;
                 while (!stopping && alive(&capture) && alive(&http) &&
                        (live || (alive(&decoder) && (hw || alive(&frames))))) {
                     usleep(200000);
                     keep_reported(session);
+                    /* "connected, but no picture": nbt_hwvideo gives up (exit 5) when VideoApp never acknowledged the
+                     * video connection, or it died. The session and the phone are fine, so only the picture side is
+                     * started again (at most every 10 s, 6 times per session) instead of leaving a black page that
+                     * only a restart fixed. */
+                    /* only while the Android Auto page is on screen: every start takes VideoApp's sink (StopVideo, Set
+                     * source 0x16), which would interrupt the reverse camera or a DVD that made it give up */
+                    if (hw && !live && !alive(&hwv) && hwv_restarts < 6 && ms() - last_hwv >= 10000 &&
+                        access("/fs/ram3/nbt-aa-hidden", F_OK)) {
+                        char line[64];
+                        snprintf(line, sizeof(line), "%d", WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
+                        plog_line("nbt_hwvideo ended (exit %s): starting it again", line, session);
+                        incident("no-picture", line, 60000);
+                        hwv = start_hwvideo(center, right, session, ++hwv_restarts);
+                        last_hwv = ms();
+                    }
+                    if (!unlink("stall")) { /* session saw no video for 15 s while the page was on screen */
+                        plog_line("FREEZE no video for 15 s while Android Auto was on screen%s", 0, session);
+                        incident("freeze", "no video frame for 15 s while the Android Auto page was on screen", 300000);
+                    }
+                    if (ms() - last_persist >= 300000) {
+                        last_persist = ms();
+                        plog_line("session still running%s", 0, session);
+                    }
                 }
+                why = stopping ? "service stopping"
+                      : !alive(&capture) ? "Android Auto session ended (phone / USB / protocol)"
+                      : !alive(&http) ? "fifo_http ended"
+                      : "decoder ended";
+                {
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s after %llds, picture restarts %u", why, (ms() - began) / 1000,
+                             hwv_restarts);
+                    plog_line("session end: %s", line, session);
+                    if (!stopping)
+                        incident("session-end", line, 30000);
+                }
+                plog_tail("/fs/ram3/nbt-aa-plugin.log", "HMI plugin log");
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
@@ -947,6 +1130,8 @@ done:
     unlink("raw.fifo");
     unlink("http.ready");
     unlink("service.lock");
+    close(lock);
+    plog_line("service stop%s", 0, session);
     report("stopped", session);
     unlink(HMI_STATE_FILE);
     return 0;
