@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, pr/valinet-ci-build-tests]
+    branches: [main]
   pull_request:
 
 permissions:
