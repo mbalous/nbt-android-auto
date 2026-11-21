@@ -42,6 +42,7 @@
 #include <time.h>
 
 #include "service_lock.h"
+#include "aoa_reenumeration.h"
 
 #define RUNTIME_DIR "/fs/ram3/nbt-aa-native"
 /* the package folder on flash: switch and config files the user creates live here (native_service itself runs in
@@ -598,6 +599,25 @@ static int find_phone(int* bus, int* device)
     return matches == 1 ? result : 0;
 }
 
+/* AOA START disconnects the normal-mode device. Wait through the empty/old-device/temporary-multiple window without
+ * sending START twice. The only success criterion is one accessory-mode candidate from a fresh inventory scan. */
+static int wait_for_accessory(int* bus, int* device, unsigned session)
+{
+    const long long deadline = ms() + 5000;
+    for (;;) {
+        const int inventory_type = find_phone(bus, device);
+        const int action = aoa_reenumeration_action(stopping, inventory_type, PHONE_ACCESSORY, ms(), deadline);
+        if (action == AOA_REENUMERATION_READY)
+            return 1;
+        if (action == AOA_REENUMERATION_STOPPED)
+            return -1;
+        if (action == AOA_REENUMERATION_FAILED)
+            return 0;
+        keep_reported(session);
+        usleep(100000);
+    }
+}
+
 /* ---- small helpers ------------------------------------------------------------------------------------------------ */
 
 /* 1 if the file contains token on one of its lines */
@@ -973,10 +993,19 @@ int main(int argc, char** argv)
                 sleep(1);
                 continue;
             }
-            sleep(1);
-            if (find_phone(&bus, &device) != PHONE_ACCESSORY) {
+            if (!log_has("switch.log", "AOA_START_SENT") &&
+                !log_has("switch.log", "AOA_START_OUTCOME_UNKNOWN")) {
                 ++attempts;
                 continue;
+            }
+            {
+                const int reenumerated = wait_for_accessory(&bus, &device, session);
+                if (reenumerated < 0)
+                    break;
+                if (!reenumerated) {
+                    ++attempts;
+                    continue;
+                }
             }
         }
 
