@@ -221,6 +221,77 @@ void test_bulk_reader(bool stop_during_transfer, bool oversize = false)
     close(pair[0]);
 }
 
+void fake_snapshot(void* context)
+{
+    const char* path = static_cast<const char*>(context);
+    require(access(path, F_OK) != 0, "transport snapshot precedes stall marker");
+    puts("TEST_TRANSPORT_SNAPSHOT");
+}
+
+struct SnapshotWorker {
+    Capture* capture;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    bool started, release;
+};
+
+void* snapshot_worker(void* context)
+{
+    SnapshotWorker* worker = static_cast<SnapshotWorker*>(context);
+    bridge_begin(worker->capture, worker->capture->usb_in_started);
+    pthread_mutex_lock(&worker->mutex);
+    worker->started = true;
+    pthread_cond_signal(&worker->condition);
+    while (!worker->release)
+        pthread_cond_wait(&worker->condition, &worker->mutex);
+    pthread_mutex_unlock(&worker->mutex);
+    bridge_end(worker->capture, worker->capture->max_usb_in_ms, worker->capture->usb_in_started);
+    return 0;
+}
+
+void test_stall_snapshot()
+{
+    char path[] = "/tmp/nbt-stall-test-XXXXXX";
+    int marker = mkstemp(path);
+    require(marker >= 0, "create stall test path");
+    close(marker);
+    unlink(path);
+    int output[2];
+    require(pipe(output) == 0, "open snapshot output");
+    fflush(stdout);
+    int saved = dup(STDOUT_FILENO);
+    require(saved >= 0 && dup2(output[1], STDOUT_FILENO) >= 0, "redirect snapshot output");
+    close(output[1]);
+    Capture c;
+    SnapshotWorker worker = {&c, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false};
+    pthread_t thread;
+    require(pthread_create(&thread, 0, snapshot_worker, &worker) == 0, "start snapshot worker");
+    pthread_mutex_lock(&worker.mutex);
+    while (!worker.started)
+        pthread_cond_wait(&worker.condition, &worker.mutex);
+    pthread_mutex_unlock(&worker.mutex);
+    report_stall(&c, fake_snapshot, path, path);
+    pthread_mutex_lock(&worker.mutex);
+    worker.release = true;
+    pthread_cond_signal(&worker.condition);
+    pthread_mutex_unlock(&worker.mutex);
+    require(pthread_join(thread, 0) == 0, "join snapshot worker");
+    pthread_cond_destroy(&worker.condition);
+    pthread_mutex_destroy(&worker.mutex);
+    require(access(path, F_OK) == 0, "stall marker created after snapshot");
+    unlink(path);
+    require(dup2(saved, STDOUT_FILENO) >= 0, "restore snapshot output");
+    close(saved);
+    char text[1024];
+    ssize_t n = read(output[0], text, sizeof(text) - 1);
+    require(n > 0, "snapshot output exists");
+    text[n] = 0;
+    close(output[0]);
+    require(strstr(text, "AA_CAPTURE_BRIDGE_SNAPSHOT") && strstr(text, "TEST_TRANSPORT_SNAPSHOT"),
+            "both bridge and transport snapshots are emitted");
+    require(!strstr(text, "usb_in_inflight_ms=-1"), "snapshot includes the active read duration");
+}
+
 void test_focus_handoff()
 {
     char path[] = "/tmp/nbt-focus-test-XXXXXX";
@@ -278,6 +349,7 @@ int main()
     test_bulk_reader(false);
     test_bulk_reader(true);
     test_bulk_reader(false, true);
+    test_stall_snapshot();
     test_focus_handoff();
     puts("Capture output OK: diagnostic index, live bytes, backpressure, USB reader, and focus handoff");
     return 0;
