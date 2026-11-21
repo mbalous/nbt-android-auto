@@ -5,7 +5,13 @@
 #include "aa_video_capture.h"
 #include <fstream>
 #include <iterator>
-struct FakeUsb {int fd,result;const char* prefix;unsigned read_size;};
+struct FakeUsb {int fd,result;const char* prefix;unsigned read_size;int cancelled;};
+static void fake_cancel(void* v) {
+    FakeUsb* f=(FakeUsb*)v;
+    ++f->cancelled;
+    shutdown(f->fd,SHUT_RDWR);
+}
+static int fake_stop_requested(void*) { return 0; }
 static int fake_transfer(void* v,int input,unsigned char* p,unsigned* size) {
     FakeUsb* f=(FakeUsb*)v;
     if(input) {
@@ -21,7 +27,9 @@ static int fake_transfer(void* v,int input,unsigned char* p,unsigned* size) {
     return 1;
 }
 static void* capture_thread(void* p) {
-    FakeUsb* f=(FakeUsb*)p;f->result=nbt_video_capture_run(fake_transfer,f,f->prefix,f->read_size);return 0;
+    FakeUsb* f=(FakeUsb*)p;
+    f->result=nbt_video_capture_run(fake_transfer,fake_cancel,fake_stop_requested,f,f->prefix,f->read_size);
+    return 0;
 }
 static Bytes read_file(const char* p) {
     std::ifstream f(p,std::ios::binary);return Bytes(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());
@@ -51,7 +59,7 @@ int main() {
         const char* prefixes[]={"capture-valid","capture-invalid","capture-fragmented","capture-usb-failed"};
         const char* prefix=prefixes[scenario];
         int sv[2];require(socketpair(AF_UNIX,SOCK_STREAM,0,sv)==0,"fake USB pair");
-        FakeUsb fake={sv[0],-1,prefix,scenario==2 ? 16384U : NBT_CAPTURE_MAX_TRANSFER};pthread_t thread;
+        FakeUsb fake={sv[0],-1,prefix,scenario==2 ? 16384U : NBT_CAPTURE_MAX_TRANSFER,0};pthread_t thread;
         require(pthread_create(&thread,0,capture_thread,&fake)==0,"capture thread");
         Frame request=receive_frame(sv[1]);require(message(request.data)==1,"capture starts version negotiation");
         peer *server=(peer*)calloc(1,sizeof(peer)),*carrier=(peer*)calloc(1,sizeof(peer));
@@ -83,6 +91,7 @@ int main() {
             }
         } else usleep(200000);
         pthread_join(thread,0);close(sv[1]);close(sv[0]);
+        require(fake.cancelled==1,"capture cancels transport before joining reader");
         require(fake.result==(scenario==1 || scenario==3 ? 3 : 0),"capture success/error result");
         release(server);free(carrier);
     }
