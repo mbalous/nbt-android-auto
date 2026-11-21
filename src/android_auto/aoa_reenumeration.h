@@ -8,6 +8,19 @@ enum AoaReenumerationAction {
     AOA_REENUMERATION_STOPPED = 3
 };
 
+enum AoaSwitchAction {
+    AOA_SWITCH_WAIT = 0,
+    AOA_SWITCH_RETRY = 1,
+    AOA_SWITCH_UNSUPPORTED = 2
+};
+
+static inline int aoa_switch_action(int protocol_ok, int unsupported)
+{
+    if (protocol_ok)
+        return AOA_SWITCH_WAIT;
+    return unsupported ? AOA_SWITCH_UNSUPPORTED : AOA_SWITCH_RETRY;
+}
+
 static inline int aoa_reenumeration_action(int stopping, int phone_type, int accessory_type,
                                            long long now_ms, long long deadline_ms)
 {
