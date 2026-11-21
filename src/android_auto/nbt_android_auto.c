@@ -27,6 +27,7 @@
 #include "usb_wait.h"
 #include "usb_zlp_policy.h"
 #include "usb_transfer_lifecycle.h"
+#include "usb_transport_diag.h"
 #ifdef NBT_AA_CAPTURE
 #include "aa_video_capture.h"
 #endif
@@ -175,13 +176,19 @@ struct bulk_submit {
     int input;
     unsigned timeout_ms;
     struct completion* completion;
+    unsigned* phase;
 };
 static int submit_bulk(void* context) {
     struct bulk_submit* s = (struct bulk_submit*)context;
     int rc = usbd_setup_bulk(s->urb, s->input ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT,
                              s->buffer, s->size);
-    if (rc == EOK)
+    if (s->phase)
+        *s->phase = rc == EOK ? USB_TRANSFER_PHASE_SUBMIT : USB_TRANSFER_PHASE_SETUP;
+    if (rc == EOK) {
         rc = usbd_io(s->urb, s->pipe, completed, s->completion, s->timeout_ms);
+        if (s->phase && rc == EOK)
+            *s->phase = USB_TRANSFER_PHASE_CALLBACK;
+    }
     return rc;
 }
 /* timeout_ms: usbd_io timeout of the transfer; the completion is awaited 1 s longer (2000 everywhere, except the session's
@@ -189,11 +196,13 @@ static int submit_bulk(void* context) {
 static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual,
                          int* completion_rc, unsigned timeout_ms,
-                         struct usb_transfer_lifecycle* lifecycle) {
+                         struct usb_transfer_lifecycle* lifecycle, unsigned* phase) {
     struct completion c;
     struct bulk_submit submit;
     int rc, waited;
     memset(&c, 0, sizeof(c));
+    if (phase)
+        *phase = USB_TRANSFER_PHASE_INIT;
     rc = usb_wait_init(&c.wait);
     if (rc) {
         *status = 0; *actual = 0; *completion_rc = -1;
@@ -201,7 +210,7 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
         return rc;
     }
     submit.urb = urb; submit.pipe = pipe; submit.buffer = buffer; submit.size = size;
-    submit.input = input; submit.timeout_ms = timeout_ms; submit.completion = &c;
+    submit.input = input; submit.timeout_ms = timeout_ms; submit.completion = &c; submit.phase = phase;
     rc = lifecycle ? usb_transfer_submit_guarded(lifecycle, input, submit_bulk, &submit) : submit_bulk(&submit);
     if (rc == EOK) waited = await_bulk_completion(&c, timeout_ms + 1000, lifecycle);
     else waited = 0;
@@ -217,6 +226,8 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
     }
     if (lifecycle && rc != USB_TRANSFER_STOPPED)
         usb_transfer_finished(lifecycle, input);
+    if (phase && waited == 1 && c.wait.done)
+        *phase = USB_TRANSFER_PHASE_COMPLETE;
     *status = c.status; *actual = c.actual;
     *completion_rc = c.wait.done ? c.rc : -1;
     usb_wait_destroy(&c.wait);
@@ -225,7 +236,7 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
 static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
     int completion_rc;
-    int rc = bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, &completion_rc, 2000, 0);
+    int rc = bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, &completion_rc, 2000, 0, 0);
     return rc == EOK ? completion_rc : rc;
 }
 static void* signal_test_completion(void* context) {
@@ -242,6 +253,7 @@ struct capture_usb {
     unsigned capacity[2];
     unsigned out_max_packet;
     struct usb_transfer_lifecycle lifecycle;
+    struct usb_transfer_diag diagnostics[2];
 };
 static unsigned removal_snapshot(long long* at_ms) {
     unsigned seen;
@@ -254,6 +266,9 @@ static unsigned removal_snapshot(long long* at_ms) {
 static int capture_transfer(void* context,int input,unsigned char* data,unsigned* size) {
     struct capture_usb* c=(struct capture_usb*)context;
     _Uint32t status=0,actual=0;int rc,completion_rc;
+    unsigned phase = USB_TRANSFER_PHASE_NONE;
+    unsigned requested = *size;
+    long long began_ms = monotonic_ms();
     if (input < 0 || input > 1 || !*size || *size > c->capacity[input]) {
         printf("AA_USB_CAPTURE_BAD_REQUEST direction=%d requested=%u\n", input, *size);
         return 0;
@@ -264,7 +279,16 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
      * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
      * logged with its USB status, so a real USB drop can be told from a pause. */
     rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,
-                       &completion_rc,input?8000:2000,&c->lifecycle);
+                       &completion_rc,input?8000:2000,&c->lifecycle,&phase);
+    {
+        const long long ended_ms = monotonic_ms();
+        const unsigned elapsed_ms = began_ms >= 0 && ended_ms >= began_ms ? (unsigned)(ended_ms - began_ms) : 0;
+        int ok = rc == EOK && completion_rc == EOK &&
+                 (status & USBD_URB_STATUS_MASK) == USBD_STATUS_CMP &&
+                 actual <= requested && (input || actual == requested);
+        usb_transfer_diag_record(&c->diagnostics[input], ok, phase, requested, actual,
+                                 elapsed_ms, rc, completion_rc, status);
+    }
     if(rc!=EOK || completion_rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP ||
        actual>*size || (!input && actual!=*size)){
         const long long failed_at_ms = monotonic_ms();
@@ -282,9 +306,11 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         _Uint32t zlp_status = 0, zlp_actual = 0;
         int zlp_completion_rc;
         int zlp_rc = bulk_transfer_t(c->urb[0], c->pipe[0], c->dma[0], 0, 0,
-                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle);
-        if (!usb_zlp_succeeded(zlp_rc, zlp_completion_rc, zlp_status,
-                               USBD_URB_STATUS_MASK, USBD_STATUS_CMP, zlp_actual)) {
+                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle, 0);
+        const int zlp_ok = usb_zlp_succeeded(zlp_rc, zlp_completion_rc, zlp_status,
+                                             USBD_URB_STATUS_MASK, USBD_STATUS_CMP, zlp_actual);
+        usb_transfer_diag_zlp(&c->diagnostics[0], zlp_ok);
+        if (!zlp_ok) {
             const long long failed_at_ms = monotonic_ms();
             long long removal_ms;
             unsigned removal_seen = removal_snapshot(&removal_ms);
@@ -435,6 +461,17 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
                    usb_packet_size((unsigned)bin->endpoint.wMaxPacketSize),c.out_max_packet,monotonic_ms());
             result=nbt_video_capture_run(capture_transfer,capture_cancel,capture_stop_requested,
                                          &c,getenv("NBT_AA_CAPTURE_PREFIX"),c.capacity[1]);
+            for (i = 0; i < 2; ++i) {
+                const struct usb_transfer_diag* d = &c.diagnostics[i];
+                printf("AA_USB_TRANSPORT_SUMMARY direction=%s attempts=%llu bytes_requested=%llu bytes_actual=%llu "
+                       "failures=%u zlp_attempts=%u zlp_failures=%u max_request=%u max_actual=%u max_elapsed_ms=%u "
+                       "first_phase=%u first_rc=%d first_completion_rc=%d first_status=%08x "
+                       "first_request=%u first_actual=%u first_elapsed_ms=%u\n",
+                       i ? "IN" : "OUT", d->attempts, d->bytes_requested, d->bytes_actual,
+                       d->failures, d->zlp_attempts, d->zlp_failures, d->max_request, d->max_actual,
+                       d->max_elapsed_ms, d->first_failure, d->first_io_rc, d->first_completion_rc,
+                       d->first_status, d->first_request, d->first_actual, d->first_elapsed_ms);
+            }
             removal_seen = removal_snapshot(&removal_ms);
                 printf("AA_USB_CAPTURE_STOP uptime_ms=%lld removal_seen=%u removal_ms=%lld result=%d\n",
                        monotonic_ms(),removal_seen,removal_ms,result);
