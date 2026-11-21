@@ -434,11 +434,13 @@ struct Capture {
     unsigned frames, configs, frame_limit;
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     long long max_usb_in_ms, max_usb_to_socket_ms, max_usb_out_ms;
+    long long usb_in_started, usb_to_socket_started, usb_out_started;
     bool live, native_focus_pending;
     LiveQueue queue;
     Capture() : socket(-1), data(-1), index(-1), error(0), stop_reader(false), reader_error(0),
                 read_size(NBT_CAPTURE_MAX_TRANSFER), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
                 max_usb_in_ms(0), max_usb_to_socket_ms(0), max_usb_out_ms(0),
+                usb_in_started(-1), usb_to_socket_started(-1), usb_out_started(-1),
                 live(false), native_focus_pending(false)
     {
         pthread_mutex_init(&mutex, 0);
@@ -712,11 +714,58 @@ bool reader_stopping(Capture* c, const char* failure = 0)
 }
 
 long long now_ms();
-void note_elapsed(long long& maximum, long long started)
+void bridge_begin(Capture* c, long long& started)
 {
-    const long long ended = now_ms();
-    if (started >= 0 && ended >= started && ended - started > maximum)
-        maximum = ended - started;
+    const long long now = now_ms();
+    pthread_mutex_lock(&c->mutex);
+    started = now;
+    pthread_mutex_unlock(&c->mutex);
+}
+
+void bridge_end(Capture* c, long long& maximum, long long& started)
+{
+    const long long now = now_ms();
+    pthread_mutex_lock(&c->mutex);
+    if (started >= 0 && now >= started && now - started > maximum)
+        maximum = now - started;
+    started = -1;
+    pthread_mutex_unlock(&c->mutex);
+}
+
+long long in_flight_ms(long long started, long long now)
+{
+    return started >= 0 && now >= started ? now - started : -1;
+}
+
+void bridge_snapshot(Capture* c)
+{
+    long long max_in, max_handoff, max_out, in, handoff, out;
+    const long long now = now_ms();
+    pthread_mutex_lock(&c->mutex);
+    max_in = c->max_usb_in_ms;
+    max_handoff = c->max_usb_to_socket_ms;
+    max_out = c->max_usb_out_ms;
+    in = in_flight_ms(c->usb_in_started, now);
+    handoff = in_flight_ms(c->usb_to_socket_started, now);
+    out = in_flight_ms(c->usb_out_started, now);
+    pthread_mutex_unlock(&c->mutex);
+    printf("AA_CAPTURE_BRIDGE_SNAPSHOT usb_in_max_ms=%lld usb_to_session_max_ms=%lld usb_out_max_ms=%lld "
+           "usb_in_inflight_ms=%lld usb_to_session_inflight_ms=%lld usb_out_inflight_ms=%lld\n",
+           max_in, max_handoff, max_out, in, handoff, out);
+}
+
+void report_stall(Capture* c, nbt_capture_snapshot snapshot, void* context, const char* path)
+{
+    bridge_snapshot(c);
+    if (snapshot)
+        snapshot(context);
+    if (fflush(stdout))
+        perror("AA_STALL snapshot flush");
+    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0)
+        close(fd);
+    else
+        perror("AA_STALL marker");
 }
 
 void* reader(void* v)
@@ -725,9 +774,9 @@ void* reader(void* v)
     unsigned char b[NBT_CAPTURE_MAX_TRANSFER];
     while (!reader_stopping(c)) {
         unsigned n = c->read_size;
-        const long long transfer_started = now_ms();
+        bridge_begin(c, c->usb_in_started);
         const bool ok = c->transfer(c->transport, 1, b, &n);
-        note_elapsed(c->max_usb_in_ms, transfer_started);
+        bridge_end(c, c->max_usb_in_ms, c->usb_in_started);
         const char* failure = !ok ? "usb_in" : n > c->read_size ? "usb_in_invalid_size" : 0;
         if (reader_stopping(c, failure) || failure)
             break;
@@ -735,9 +784,9 @@ void* reader(void* v)
         if (!n)
             usleep(1000);
         else {
-            const long long handoff_started = now_ms();
+            bridge_begin(c, c->usb_to_socket_started);
             const bool written = write_all(c->socket, b, n);
-            note_elapsed(c->max_usb_to_socket_ms, handoff_started);
+            bridge_end(c, c->max_usb_to_socket_ms, c->usb_to_socket_started);
             if (!written) {
                 reader_stopping(c, "usb_to_session_socket");
                 break;
@@ -900,7 +949,7 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
 // Returns 0 = session received valid config and video without a capture or pump error, 2 = bad arguments / files,
 // 3 = failure.
 extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_cancel cancel,
-                                     nbt_capture_stop_requested stop_requested,
+                                     nbt_capture_stop_requested stop_requested, nbt_capture_snapshot snapshot,
                                      void* context, const char* prefix, unsigned read_size)
 {
     if (!transfer || !prefix || !*prefix || strlen(prefix) > 200 || !read_size || read_size > NBT_CAPTURE_MAX_TRANSFER)
@@ -1132,9 +1181,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
             } else if (!stall_reported && now_ms() - stall_since >= 15000) {
                 stall_reported = true;
                 printf("AA_STALL no video frame for 15 s while the page is on screen (frames %u)\n", f);
-                const int fd = open("/fs/ram3/nbt-aa-native/stall", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd >= 0)
-                    close(fd);
+                report_stall(&c, snapshot, context, "/fs/ram3/nbt-aa-native/stall");
             }
         }
         if (c.live && !bye_until && now_ms() >= next_night_check) {
@@ -1198,9 +1245,9 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
                 break;
             }
             unsigned size = n;
-            const long long transfer_started = now_ms();
+            bridge_begin(&c, c.usb_out_started);
             const bool sent = transfer(context, 0, b, &size);
-            note_elapsed(c.max_usb_out_ms, transfer_started);
+            bridge_end(&c, c.max_usb_out_ms, c.usb_out_started);
             if (!sent || size != (unsigned)n) {
                 printf("AA_CAPTURE_PUMP_ERROR operation=usb_out requested=%u\n", (unsigned)n);
                 stop_reason = "usb_out";
@@ -1220,12 +1267,13 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
             stop_reason = c.reader_error;
         pump_error = true;
     }
+    const bool clean_shutdown = !pump_error && !c.error;
     pthread_mutex_unlock(&c.mutex);
     printf("AA_VIDEO_CAPTURE_STOP reason=%s local_shutdown=%s uptime_ms=%lld\n",
            stop_reason, bye_reason ? bye_reason : "none", now_ms());
     shutdown(c.socket, SHUT_RDWR);
     if (cancel)
-        cancel(context);
+        cancel(context, clean_shutdown);
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in

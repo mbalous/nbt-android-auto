@@ -137,12 +137,17 @@ struct completion {
     struct usb_wait wait;
     int rc;
     _Uint32t status, actual;
+    void (*observe_callback)(void*, int);
+    void* observe_context;
+    int input;
 };
 static void completed(struct usbd_urb* urb, struct usbd_pipe* pipe, void* context) {
     struct completion* c = (struct completion*)context;
     (void)pipe;
     pthread_mutex_lock(&c->wait.mutex);
     c->rc = usbd_urb_status(urb, &c->status, &c->actual);
+    if (c->observe_callback)
+        c->observe_callback(c->observe_context, c->input);
     usb_wait_done_locked(&c->wait);
     pthread_mutex_unlock(&c->wait.mutex);
 }
@@ -186,11 +191,15 @@ static int submit_bulk(void* context) {
 static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual,
                          int* completion_rc, unsigned timeout_ms,
-                         struct usb_transfer_lifecycle* lifecycle, unsigned* phase) {
+                         struct usb_transfer_lifecycle* lifecycle, unsigned* phase,
+                         void (*observe_callback)(void*, int), void* observe_context) {
     struct completion c;
     struct bulk_submit submit;
     int rc, waited;
     memset(&c, 0, sizeof(c));
+    c.observe_callback = observe_callback;
+    c.observe_context = observe_context;
+    c.input = input;
     if (phase)
         *phase = USB_TRANSFER_PHASE_INIT;
     rc = usb_wait_init(&c.wait);
@@ -205,8 +214,12 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
     if (rc == EOK) waited = await_bulk_completion(&c, timeout_ms + 1000, lifecycle);
     else waited = 0;
     if (rc == EOK && waited != 1) {
-        puts("AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
-        usbd_abort_pipe(pipe);
+        int abort_rc;
+        puts(waited == -ECANCELED ? "AA_BULK_CANCEL_ABORTING_NO_RETRY" :
+             "AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
+        abort_rc = usbd_abort_pipe(pipe);
+        if (abort_rc != EOK)
+            printf("AA_BULK_ABORT_FAILED rc=%d\n", abort_rc);
         if (await_completion(&c, 1000) != 1) {
             /* Do not free buffers/URBs still referenced by the USB callback. */
             puts("AA_BULK_ABORT_UNCONFIRMED_EXITING_NO_RETRY");
@@ -226,7 +239,7 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
 static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
                          unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
     int completion_rc;
-    int rc = bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, &completion_rc, 2000, 0, 0);
+    int rc = bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, &completion_rc, 2000, 0, 0, 0, 0);
     return rc == EOK ? completion_rc : rc;
 }
 static void* signal_test_completion(void* context) {
@@ -243,8 +256,17 @@ struct capture_usb {
     unsigned capacity[2];
     unsigned out_max_packet;
     struct usb_transfer_lifecycle lifecycle;
+    pthread_mutex_t diagnostics_mutex;
+    int clean_shutdown;
     struct usb_transfer_diag diagnostics[2];
+    struct usb_transfer_observation observation[2];
 };
+static void capture_callback_observed(void* context, int input) {
+    struct capture_usb* c = (struct capture_usb*)context;
+    pthread_mutex_lock(&c->diagnostics_mutex);
+    usb_observation_callback(&c->observation[input]);
+    pthread_mutex_unlock(&c->diagnostics_mutex);
+}
 static unsigned removal_snapshot(long long* at_ms) {
     unsigned seen;
     pthread_mutex_lock(&lock);
@@ -255,7 +277,7 @@ static unsigned removal_snapshot(long long* at_ms) {
 }
 static int capture_transfer(void* context,int input,unsigned char* data,unsigned* size) {
     struct capture_usb* c=(struct capture_usb*)context;
-    _Uint32t status=0,actual=0;int rc,completion_rc;
+    _Uint32t status=0,actual=0;int rc,completion_rc,interrupted,ok;
     unsigned phase = USB_TRANSFER_PHASE_NONE;
     unsigned requested = *size;
     long long began_ms = monotonic_ms();
@@ -264,29 +286,39 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         return 0;
     }
     if(!input)memcpy(c->dma[0],data,*size);
+    pthread_mutex_lock(&c->diagnostics_mutex);
+    usb_observation_begin(&c->observation[input], began_ms);
+    pthread_mutex_unlock(&c->diagnostics_mutex);
     /* Session reads (car 2026-11-17: a session ended with "Phone closed socket or read error" after 94 s of normal
      * streaming, no RX-timeout message): a bulk IN read gave up after 2 s without data, which ended the reader and the
      * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
      * logged with its USB status, so a real USB drop can be told from a pause. */
     rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,
-                       &completion_rc,input?8000:2000,&c->lifecycle,&phase);
+                       &completion_rc,input?8000:2000,&c->lifecycle,&phase,capture_callback_observed,c);
     {
         const long long ended_ms = monotonic_ms();
         const unsigned elapsed_ms = began_ms >= 0 && ended_ms >= began_ms ? (unsigned)(ended_ms - began_ms) : 0;
-        int ok = rc == EOK && completion_rc == EOK &&
-                 (status & USBD_URB_STATUS_MASK) == USBD_STATUS_CMP &&
-                 actual <= requested && (input || actual == requested);
-        usb_transfer_diag_record(&c->diagnostics[input], ok, phase, requested, actual,
+        ok = rc == EOK && completion_rc == EOK &&
+             (status & USBD_URB_STATUS_MASK) == USBD_STATUS_CMP &&
+             actual <= requested && (input || actual == requested);
+        pthread_mutex_lock(&c->diagnostics_mutex);
+        interrupted = !ok && usb_observation_interrupted(&c->observation[input], c->clean_shutdown,
+                                                        rc, USB_TRANSFER_STOPPED, ECANCELED);
+        usb_transfer_diag_record(&c->diagnostics[input], ok || interrupted, phase, requested, actual,
                                  elapsed_ms, rc, completion_rc, status);
+        if (interrupted)
+            c->diagnostics[input].interruptions = usb_diag_saturate_add(c->diagnostics[input].interruptions);
+        c->observation[input].in_flight = 0;
+        pthread_mutex_unlock(&c->diagnostics_mutex);
     }
-    if(rc!=EOK || completion_rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP ||
-       actual>*size || (!input && actual!=*size)){
+    if(!ok){
         const long long failed_at_ms = monotonic_ms();
         long long removal_ms;
         unsigned removal_seen = removal_snapshot(&removal_ms);
-        printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=%u "
+        printf("AA_USB_%s_%s rc=%d status=%08x bytes=%u completion_rc=%d requested=%u "
                "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
-               input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual,completion_rc,*size,
+               input?"IN":"OUT",interrupted?"INTERRUPTED_OUTCOME_UNKNOWN":"FAILED",
+               rc,(unsigned)status,(unsigned)actual,completion_rc,*size,
                failed_at_ms,removal_seen,removal_ms);
         return 0;
     }
@@ -295,17 +327,29 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         /* A packet-aligned bulk OUT transfer needs a ZLP so the phone's gadget read terminates. */
         _Uint32t zlp_status = 0, zlp_actual = 0;
         int zlp_completion_rc;
+        pthread_mutex_lock(&c->diagnostics_mutex);
+        usb_observation_begin(&c->observation[0], monotonic_ms());
+        pthread_mutex_unlock(&c->diagnostics_mutex);
         int zlp_rc = bulk_transfer_t(c->urb[0], c->pipe[0], c->dma[0], 0, 0,
-                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle, 0);
+                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle, 0,
+                                     capture_callback_observed, c);
         const int zlp_ok = usb_zlp_succeeded(zlp_rc, zlp_completion_rc, zlp_status,
                                              USBD_URB_STATUS_MASK, USBD_STATUS_CMP, zlp_actual);
-        usb_transfer_diag_zlp(&c->diagnostics[0], zlp_ok);
+        pthread_mutex_lock(&c->diagnostics_mutex);
+        interrupted = !zlp_ok && usb_observation_interrupted(&c->observation[0], c->clean_shutdown,
+                                                            zlp_rc, USB_TRANSFER_STOPPED, ECANCELED);
+        usb_transfer_diag_zlp(&c->diagnostics[0], zlp_ok || interrupted);
+        if (interrupted)
+            c->diagnostics[0].interruptions = usb_diag_saturate_add(c->diagnostics[0].interruptions);
+        c->observation[0].in_flight = 0;
+        pthread_mutex_unlock(&c->diagnostics_mutex);
         if (!zlp_ok) {
             const long long failed_at_ms = monotonic_ms();
             long long removal_ms;
             unsigned removal_seen = removal_snapshot(&removal_ms);
-            printf("AA_USB_OUT_FAILED rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
+            printf("AA_USB_OUT_%s rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
                    "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
+                   interrupted?"INTERRUPTED_OUTCOME_UNKNOWN":"FAILED",
                    zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
                    failed_at_ms, removal_seen, removal_ms);
             return 0;
@@ -313,13 +357,68 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
     }
     *size=actual;return 1;
 }
-static void capture_cancel(void* context) {
+static void capture_cancel(void* context, int clean_shutdown) {
     struct capture_usb* c = (struct capture_usb*)context;
-    unsigned active = usb_transfer_cancel(&c->lifecycle);
-    if (active & 1)
-        printf("AA_USB_CANCEL direction=OUT rc=%d\n", usbd_abort_pipe(c->pipe[0]));
-    if (active & 2)
-        printf("AA_USB_CANCEL direction=IN rc=%d\n", usbd_abort_pipe(c->pipe[1]));
+    unsigned active;
+    int rc;
+    pthread_mutex_lock(&c->diagnostics_mutex);
+    c->clean_shutdown = clean_shutdown;
+    if (clean_shutdown) {
+        usb_observation_cancel(&c->observation[0]);
+        usb_observation_cancel(&c->observation[1]);
+    }
+    pthread_mutex_unlock(&c->diagnostics_mutex);
+    active = usb_transfer_cancel(&c->lifecycle);
+    pthread_mutex_lock(&c->diagnostics_mutex);
+    if (clean_shutdown && (active & 1))
+        usb_observation_cancel(&c->observation[0]);
+    if (clean_shutdown && (active & 2))
+        usb_observation_cancel(&c->observation[1]);
+    pthread_mutex_unlock(&c->diagnostics_mutex);
+    if (active & 1) {
+        rc = usbd_abort_pipe(c->pipe[0]);
+        printf("AA_USB_CANCEL direction=OUT rc=%d\n", rc);
+        if (rc != EOK) {
+            pthread_mutex_lock(&c->diagnostics_mutex);
+            c->diagnostics[0].abort_failures = usb_diag_saturate_add(c->diagnostics[0].abort_failures);
+            pthread_mutex_unlock(&c->diagnostics_mutex);
+        }
+    }
+    if (active & 2) {
+        rc = usbd_abort_pipe(c->pipe[1]);
+        printf("AA_USB_CANCEL direction=IN rc=%d\n", rc);
+        if (rc != EOK) {
+            pthread_mutex_lock(&c->diagnostics_mutex);
+            c->diagnostics[1].abort_failures = usb_diag_saturate_add(c->diagnostics[1].abort_failures);
+            pthread_mutex_unlock(&c->diagnostics_mutex);
+        }
+    }
+}
+static void capture_diagnostics(struct capture_usb* c, const char* kind) {
+    struct usb_transfer_diag diagnostics[2];
+    struct usb_transfer_observation observations[2];
+    const long long now = monotonic_ms();
+    int i;
+    pthread_mutex_lock(&c->diagnostics_mutex);
+    memcpy(diagnostics, c->diagnostics, sizeof(diagnostics));
+    memcpy(observations, c->observation, sizeof(observations));
+    pthread_mutex_unlock(&c->diagnostics_mutex);
+    for (i = 0; i < 2; ++i) {
+        const struct usb_transfer_diag* d = &diagnostics[i];
+        const long long in_flight_ms = observations[i].in_flight && observations[i].started_ms >= 0 &&
+                                      now >= observations[i].started_ms ? now - observations[i].started_ms : -1;
+        printf("AA_USB_TRANSPORT_%s direction=%s attempts=%llu bytes_requested=%llu bytes_actual=%llu "
+               "failures=%u interruptions=%u abort_failures=%u zlp_attempts=%u zlp_failures=%u max_request=%u max_actual=%u "
+               "max_elapsed_ms=%u in_flight_ms=%lld first_phase=%u first_rc=%d first_completion_rc=%d "
+               "first_status=%08x first_request=%u first_actual=%u first_elapsed_ms=%u\n",
+               kind, i ? "IN" : "OUT", d->attempts, d->bytes_requested, d->bytes_actual,
+               d->failures, d->interruptions, d->abort_failures, d->zlp_attempts, d->zlp_failures, d->max_request, d->max_actual,
+               d->max_elapsed_ms, in_flight_ms, d->first_failure, d->first_io_rc, d->first_completion_rc,
+               d->first_status, d->first_request, d->first_actual, d->first_elapsed_ms);
+    }
+}
+static void capture_snapshot(void* context) {
+    capture_diagnostics((struct capture_usb*)context, "SNAPSHOT");
 }
 static int capture_stop_requested(void* context) {
     struct capture_usb* c = (struct capture_usb*)context;
@@ -432,6 +531,12 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
             puts("AA_USB_CAPTURE_START_FAILED cannot initialize transfer lifecycle");
             goto done;
         }
+        rc = pthread_mutex_init(&c.diagnostics_mutex, NULL);
+        if (rc) {
+            printf("AA_USB_CAPTURE_START_FAILED diagnostics_mutex_rc=%d\n", rc);
+            usb_transfer_lifecycle_destroy(&c.lifecycle);
+            goto done;
+        }
         c.pipe[0] = output;
         c.pipe[1] = input;
         c.capacity[0] = NBT_CAPTURE_MAX_TRANSFER;
@@ -449,26 +554,17 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
                    (unsigned)instance->path,(unsigned)instance->devno,(unsigned)instance->generation,
                    (unsigned)bin->endpoint.bEndpointAddress,(unsigned)bout->endpoint.bEndpointAddress,c.capacity[1],
                    usb_packet_size((unsigned)bin->endpoint.wMaxPacketSize),c.out_max_packet,monotonic_ms());
-            result=nbt_video_capture_run(capture_transfer,capture_cancel,capture_stop_requested,
+            result=nbt_video_capture_run(capture_transfer,capture_cancel,capture_stop_requested,capture_snapshot,
                                          &c,getenv("NBT_AA_CAPTURE_PREFIX"),c.capacity[1]);
-            for (i = 0; i < 2; ++i) {
-                const struct usb_transfer_diag* d = &c.diagnostics[i];
-                printf("AA_USB_TRANSPORT_SUMMARY direction=%s attempts=%llu bytes_requested=%llu bytes_actual=%llu "
-                       "failures=%u zlp_attempts=%u zlp_failures=%u max_request=%u max_actual=%u max_elapsed_ms=%u "
-                       "first_phase=%u first_rc=%d first_completion_rc=%d first_status=%08x "
-                       "first_request=%u first_actual=%u first_elapsed_ms=%u\n",
-                       i ? "IN" : "OUT", d->attempts, d->bytes_requested, d->bytes_actual,
-                       d->failures, d->zlp_attempts, d->zlp_failures, d->max_request, d->max_actual,
-                       d->max_elapsed_ms, d->first_failure, d->first_io_rc, d->first_completion_rc,
-                       d->first_status, d->first_request, d->first_actual, d->first_elapsed_ms);
-            }
+            capture_diagnostics(&c, "SUMMARY");
             removal_seen = removal_snapshot(&removal_ms);
-                printf("AA_USB_CAPTURE_STOP uptime_ms=%lld removal_seen=%u removal_ms=%lld result=%d\n",
-                       monotonic_ms(),removal_seen,removal_ms,result);
-            } else {
-                puts("AA_USB_CAPTURE_START_FAILED cannot allocate transfer buffers or invalid OUT max packet size");
-            }
+            printf("AA_USB_CAPTURE_STOP uptime_ms=%lld removal_seen=%u removal_ms=%lld result=%d\n",
+                   monotonic_ms(),removal_seen,removal_ms,result);
+        } else {
+            puts("AA_USB_CAPTURE_START_FAILED cannot allocate transfer buffers or invalid OUT max packet size");
+        }
         for(i=0;i<2;++i) {if(c.urb[i])usbd_free_urb(c.urb[i]);if(c.dma[i])usbd_free(c.dma[i]);}
+        pthread_mutex_destroy(&c.diagnostics_mutex);
         usb_transfer_lifecycle_destroy(&c.lifecycle);
         goto done;
     }
