@@ -49,7 +49,8 @@ ntox86-ar rcs libnbt_aa_core.a core/aa_session.o core/aa_cryptor.o core/audio_ac
 echo "== nbt_android_auto (USB/AOA + TLS + Android Auto session)"
 cd $A
 $CC -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c nbt_android_auto.c -o $W/nbt_android_auto.o
-$CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
+$CXX -O2 $AAINC -c aa_video_capture.cpp -o $W/aa_video_capture.o
+$CXX $AAINC aa_audio.cpp aa_media_out.cpp tls_usb_probe.cpp $W/aa_video_capture.o $W/nbt_android_auto.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
   -lsocket -lm -lusbdi -o $OUT/nbt_android_auto
 
 echo "== native_service, decode_runner, fifo_http, accessory_window"

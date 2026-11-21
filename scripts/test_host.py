@@ -57,7 +57,8 @@ def main():
         ]
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
-            subprocess.run([os.environ.get("CXX", "g++"), *flags, *extra_flags, str(ROOT / source),
+            optimization = ["-O2"] if source.endswith("test_video_capture_output.cpp") else []
+            subprocess.run([os.environ.get("CXX", "g++"), *flags, *optimization, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)
 
