@@ -433,10 +433,12 @@ struct Capture {
     uint64_t bytes;  // unpadded input bytes in live mode, bytes written in diagnostic mode
     unsigned frames, configs, frame_limit;
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
+    long long max_usb_in_ms, max_usb_to_socket_ms, max_usb_out_ms;
     bool live, native_focus_pending;
     LiveQueue queue;
     Capture() : socket(-1), data(-1), index(-1), error(0), stop_reader(false), reader_error(0),
                 read_size(NBT_CAPTURE_MAX_TRANSFER), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
+                max_usb_in_ms(0), max_usb_to_socket_ms(0), max_usb_out_ms(0),
                 live(false), native_focus_pending(false)
     {
         pthread_mutex_init(&mutex, 0);
@@ -709,22 +711,37 @@ bool reader_stopping(Capture* c, const char* failure = 0)
     return stop;
 }
 
+long long now_ms();
+void note_elapsed(long long& maximum, long long started)
+{
+    const long long ended = now_ms();
+    if (started >= 0 && ended >= started && ended - started > maximum)
+        maximum = ended - started;
+}
+
 void* reader(void* v)
 {
     Capture* c = (Capture*)v;
     unsigned char b[NBT_CAPTURE_MAX_TRANSFER];
     while (!reader_stopping(c)) {
         unsigned n = c->read_size;
+        const long long transfer_started = now_ms();
         const bool ok = c->transfer(c->transport, 1, b, &n);
+        note_elapsed(c->max_usb_in_ms, transfer_started);
         const char* failure = !ok ? "usb_in" : n > c->read_size ? "usb_in_invalid_size" : 0;
         if (reader_stopping(c, failure) || failure)
             break;
         // A successful zero-length USB packet contributes no bytes to the AA stream; it is not socket EOF.
         if (!n)
             usleep(1000);
-        else if (!write_all(c->socket, b, n)) {
-            reader_stopping(c, "usb_to_session_socket");
-            break;
+        else {
+            const long long handoff_started = now_ms();
+            const bool written = write_all(c->socket, b, n);
+            note_elapsed(c->max_usb_to_socket_ms, handoff_started);
+            if (!written) {
+                reader_stopping(c, "usb_to_session_socket");
+                break;
+            }
         }
     }
     shutdown(c->socket, SHUT_RDWR);
@@ -1181,7 +1198,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
                 break;
             }
             unsigned size = n;
-            if (!transfer(context, 0, b, &size) || size != (unsigned)n) {
+            const long long transfer_started = now_ms();
+            const bool sent = transfer(context, 0, b, &size);
+            note_elapsed(c.max_usb_out_ms, transfer_started);
+            if (!sent || size != (unsigned)n) {
                 printf("AA_CAPTURE_PUMP_ERROR operation=usb_out requested=%u\n", (unsigned)n);
                 stop_reason = "usb_out";
                 pump_error = true;
@@ -1228,6 +1248,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
     close(c.data);
     close(c.index);
     const int result = !pump_error && !c.error && c.frames && c.configs ? 0 : 3;
+    printf("AA_CAPTURE_BRIDGE_SUMMARY usb_in_max_ms=%lld usb_to_session_max_ms=%lld usb_out_max_ms=%lld\n",
+           c.max_usb_in_ms, c.max_usb_to_socket_ms, c.max_usb_out_ms);
     printf("AA_VIDEO_CAPTURE_END frames=%u configs=%u bytes=%llu invalid=%d no_display=1 result=%d\n", c.frames,
            c.configs, (unsigned long long)c.bytes, c.error, result);
     return result;
