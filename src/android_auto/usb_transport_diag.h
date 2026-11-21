@@ -1,6 +1,23 @@
 #ifndef NBT_USB_TRANSPORT_DIAG_H
 #define NBT_USB_TRANSPORT_DIAG_H
 
+#include <errno.h>
+
+static inline const char* usb_diag_status_class(int completion_rc, unsigned status)
+{
+    if (completion_rc == ENODEV)
+        return "status_query_enodev";
+    if (completion_rc == EINTR)
+        return "aborted";
+    if (completion_rc == ETIMEDOUT)
+        return "timeout";
+    if (status == 0x02000005U)
+        return "device_noanswer";
+    if ((status & 0xff000000U) == 0x01000000U)
+        return "complete";
+    return "other_or_unknown";
+}
+
 enum usb_transfer_phase {
     USB_TRANSFER_PHASE_NONE = 0,
     USB_TRANSFER_PHASE_INIT = 1,

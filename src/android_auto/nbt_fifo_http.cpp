@@ -62,8 +62,12 @@ static int send_all(int fd, const char* data, unsigned n)
         }
         if (sent < 0 && errno == EINTR)
             continue;
-        if (!sent || (errno != EAGAIN && errno != EWOULDBLOCK) || stop)
+        if (!sent || (errno != EAGAIN && errno != EWOULDBLOCK) || stop) {
+            if (!stop)
+                fprintf(stderr, "AA_FIFO_HTTP_ERROR operation=send reason=peer_or_io errno=%d uptime_ms=%lld\n",
+                        sent < 0 ? errno : 0, monotonic_ms());
             return 0;
+        }
 
         now = monotonic_ms();
         if (now < 0)
@@ -71,22 +75,27 @@ static int send_all(int fd, const char* data, unsigned n)
         if (!deadline)
             deadline = now + 2000;
         remaining = deadline - now;
-        if (remaining <= 0)
+        if (remaining <= 0) {
+            fprintf(stderr, "AA_FIFO_HTTP_ERROR operation=send reason=stall uptime_ms=%lld\n", now);
             return 0;
+        }
         timeout.tv_sec = remaining / 1000;
         timeout.tv_usec = (remaining % 1000) * 1000;
         FD_ZERO(&set);
         FD_SET(fd, &set);
         ready = select(fd + 1, 0, &set, 0, &timeout);
-        if (ready == 0 || (ready < 0 && errno != EINTR))
+        if (ready == 0 || (ready < 0 && errno != EINTR)) {
+            fprintf(stderr, "AA_FIFO_HTTP_ERROR operation=select reason=%s errno=%d uptime_ms=%lld\n",
+                    ready == 0 ? "stall" : "io", ready < 0 ? errno : 0, monotonic_ms());
             return 0;
+        }
     }
     return !n;
 }
 
 int main(int argc, char** argv)
 {
-    int fifo, server, client, flags, one = 1, used = 0;
+    int fifo, server, client, flags, one = 1, used = 0, failed = 0;
     char request[4096], data[65536];
     sockaddr_in addr = {};
     const char* header = "HTTP/1.0 200 OK\r\nContent-Type: video/h264\r\nConnection: close\r\n\r\n";
@@ -162,15 +171,26 @@ int main(int argc, char** argv)
         if (select(fifo + 1, &set, 0, 0, &timeout) < 0) {
             if (errno == EINTR)
                 continue;
+            fprintf(stderr, "AA_FIFO_HTTP_ERROR operation=fifo_select errno=%d uptime_ms=%lld\n",
+                    errno, monotonic_ms());
+            failed = 1;
             break;
         }
         if (!FD_ISSET(fifo, &set))
             continue;
         n = read(fifo, data, sizeof(data));
-        if (n > 0 && !send_all(client, data, n))
+        if (n > 0 && !send_all(client, data, n)) {
+            failed = !stop;
             break;
+        }
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            fprintf(stderr, "AA_FIFO_HTTP_ERROR operation=fifo_read errno=%d uptime_ms=%lld\n",
+                    errno, monotonic_ms());
+            failed = 1;
+            break;
+        }
     }
     close(client);
     close(fifo);
-    return 0;
+    return failed ? 3 : 0;
 }

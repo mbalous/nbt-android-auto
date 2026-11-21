@@ -130,7 +130,16 @@ int main()
     require(usb_transfer_submit_guarded(&lifecycle, 1, immediate_submit, &active) == 0,
             "submit IN");
     require(usb_transfer_cancel(&lifecycle) == 3, "cancel reports both active directions");
+    require(!usb_transfer_claim_abort(&lifecycle, 0) && !usb_transfer_claim_abort(&lifecycle, 1),
+            "waiter cannot abort after cancellation claimed the pipes");
     usb_transfer_finished(&lifecycle, 0);
+    usb_transfer_finished(&lifecycle, 1);
+    usb_transfer_lifecycle_destroy(&lifecycle);
+
+    require(usb_transfer_lifecycle_init(&lifecycle) == 0, "initialize abort ownership lifecycle");
+    require(usb_transfer_submit_guarded(&lifecycle, 1, immediate_submit, &active) == 0, "submit read");
+    require(usb_transfer_claim_abort(&lifecycle, 1), "timeout claims abort");
+    require(usb_transfer_cancel(&lifecycle) == 0, "cancellation does not abort an already claimed pipe");
     usb_transfer_finished(&lifecycle, 1);
     usb_transfer_lifecycle_destroy(&lifecycle);
     puts("USB_TRANSFER_LIFECYCLE_OK");

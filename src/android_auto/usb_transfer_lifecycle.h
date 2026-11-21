@@ -10,6 +10,7 @@ struct usb_transfer_lifecycle {
     pthread_mutex_t mutex;
     int stopping;
     int active[2];
+    int abort_claimed[2];
 };
 
 typedef int (*usb_transfer_submit)(void*);
@@ -36,8 +37,10 @@ static inline int usb_transfer_submit_guarded(struct usb_transfer_lifecycle* lif
         return USB_TRANSFER_STOPPED;
     }
     rc = submit(context);
-    if (rc == 0)
+    if (rc == 0) {
         lifecycle->active[direction] = 1;
+        lifecycle->abort_claimed[direction] = 0;
+    }
     pthread_mutex_unlock(&lifecycle->mutex);
     return rc;
 }
@@ -56,12 +59,29 @@ static inline unsigned usb_transfer_cancel(struct usb_transfer_lifecycle* lifecy
     if (pthread_mutex_lock(&lifecycle->mutex))
         return 0;
     lifecycle->stopping = 1;
-    if (lifecycle->active[0])
+    if (lifecycle->active[0] && !lifecycle->abort_claimed[0]) {
+        lifecycle->abort_claimed[0] = 1;
         active |= 1;
-    if (lifecycle->active[1])
+    }
+    if (lifecycle->active[1] && !lifecycle->abort_claimed[1]) {
+        lifecycle->abort_claimed[1] = 1;
         active |= 2;
+    }
     pthread_mutex_unlock(&lifecycle->mutex);
     return active;
+}
+
+static inline int usb_transfer_claim_abort(struct usb_transfer_lifecycle* lifecycle, int direction)
+{
+    int claimed = 0;
+    if (pthread_mutex_lock(&lifecycle->mutex))
+        return 0;
+    if (lifecycle->active[direction] && !lifecycle->abort_claimed[direction]) {
+        lifecycle->abort_claimed[direction] = 1;
+        claimed = 1;
+    }
+    pthread_mutex_unlock(&lifecycle->mutex);
+    return claimed;
 }
 
 static inline int usb_transfer_is_stopping(struct usb_transfer_lifecycle* lifecycle)

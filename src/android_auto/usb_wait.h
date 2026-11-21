@@ -57,11 +57,35 @@ static void usb_wait_signal(struct usb_wait* w)
     }
 }
 
+static inline int usb_wait_is_done(struct usb_wait* w)
+{
+    int done, rc = pthread_mutex_lock(&w->mutex);
+    if (rc)
+        return -rc;
+    done = w->done;
+    pthread_mutex_unlock(&w->mutex);
+    return done;
+}
+
+static int usb_wait_await_until(struct usb_wait* w, const struct timespec* deadline)
+{
+    int rc = pthread_mutex_lock(&w->mutex);
+    if (rc)
+        return -rc;
+    rc = 0;
+    while (!w->done && (!rc || rc == EINTR))
+        rc = pthread_cond_timedwait(&w->condition, &w->mutex, deadline);
+    int done = w->done;
+    pthread_mutex_unlock(&w->mutex);
+    if (done)
+        return 1;
+    return rc == ETIMEDOUT ? 0 : -rc;
+}
+
 static int usb_wait_await(struct usb_wait* w, unsigned milliseconds)
 {
     struct timespec deadline;
-    int rc = clock_gettime(CLOCK_MONOTONIC, &deadline);
-    if (rc)
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline))
         return -(errno ? errno : EIO);
     deadline.tv_sec += (time_t)(milliseconds / 1000);
     deadline.tv_nsec += (long)(milliseconds % 1000) * 1000000L;
@@ -69,17 +93,7 @@ static int usb_wait_await(struct usb_wait* w, unsigned milliseconds)
         ++deadline.tv_sec;
         deadline.tv_nsec -= 1000000000L;
     }
-    rc = pthread_mutex_lock(&w->mutex);
-    if (rc)
-        return -rc;
-    rc = 0;
-    while (!w->done && (!rc || rc == EINTR))
-        rc = pthread_cond_timedwait(&w->condition, &w->mutex, &deadline);
-    int done = w->done;
-    pthread_mutex_unlock(&w->mutex);
-    if (done)
-        return 1;
-    return rc == ETIMEDOUT ? 0 : -rc;
+    return usb_wait_await_until(w, &deadline);
 }
 
 #endif

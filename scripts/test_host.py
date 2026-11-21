@@ -42,6 +42,9 @@ def main():
             ("src/android_auto/tests/test_usb_wait.cpp", [], ["-pthread"]),
             ("src/android_auto/tests/test_usb_zlp_policy.cpp", [], []),
             ("src/android_auto/tests/test_usb_transfer_lifecycle.cpp", [], ["-pthread"]),
+            ("src/android_auto/tests/test_usb_capture.c", [],
+             ["-pthread", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+              "-DEOK=0", "-idirafter", str(ROOT / "toolchain/sysroot/usr/include")]),
             ("src/android_auto/tests/test_aoa_reenumeration.cpp", [], []),
             ("src/android_auto/tests/test_usb_transport_diag.cpp", [], []),
             ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")], []),
@@ -49,6 +52,7 @@ def main():
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
              ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
             ("src/android_auto/tests/test_fifo_http.cpp", [], ["-pthread"]),
+            ("src/android_auto/tests/test_video_supervisor.c", [], ["-pthread"]),
             ("src/idrive/test_exit_handoff.cpp", [str(work)],
              ["-pthread", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections"]),
             ("src/android_auto/knob/tests/test_prompt_route.cpp", [str(work)],
@@ -57,7 +61,10 @@ def main():
         ]
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
-            subprocess.run([os.environ.get("CXX", "g++"), *flags, *extra_flags, str(ROOT / source),
+            compiler = os.environ.get("CC", "cc") if source.endswith(".c") else os.environ.get("CXX", "g++")
+            source_flags = ["-std=gnu99" if flag == "-std=gnu++0x" else flag for flag in flags] \
+                if source.endswith(".c") else flags
+            subprocess.run([compiler, *source_flags, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)
 

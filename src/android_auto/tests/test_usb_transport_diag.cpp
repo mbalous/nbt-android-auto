@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../usb_transport_diag.h"
 
 static void require(int condition, const char* message)
@@ -13,6 +14,9 @@ static void require(int condition, const char* message)
 int main()
 {
     usb_transfer_diag diag = {};
+    require(!strcmp(usb_diag_status_class(0, 0x02000005U), "device_noanswer"), "decode no answer");
+    require(!strcmp(usb_diag_status_class(ENODEV, 0x02000005U), "status_query_enodev"), "preserve status-query error");
+    require(!strcmp(usb_diag_status_class(EINTR, 0), "aborted"), "decode interrupted completion");
     usb_transfer_diag_record(&diag, 1, USB_TRANSFER_PHASE_COMPLETE, 512, 512, 2, 0, 0, 0x01000000U);
     require(diag.attempts == 1 && diag.failures == 0, "successful observation");
     usb_transfer_diag_record(&diag, 0, USB_TRANSFER_PHASE_CALLBACK, 65536, 4608, 8123, 260, 19, 0x02000005U);

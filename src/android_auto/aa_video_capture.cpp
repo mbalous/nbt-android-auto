@@ -17,6 +17,7 @@
 #include "aa_audio.hpp"
 #include "aa_session.hpp"
 #include "aa_media_out.hpp"
+#include "video_recovery.h"
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -404,16 +405,27 @@ struct LiveQueue {
     pthread_cond_t cv;
     std::deque<std::vector<uint8_t> > items; // H.264 access units
     size_t bytes;                            // total size of items
-    bool stop, dropping;                     // dropping: skipping frames until the next IDR / config
+    bool stop, dropping, paused, need_idr, condition_ready;
+    std::vector<uint8_t> recovery_config;
     unsigned dropped, drops;                 // dropped frames, number of drop runs
-    LiveQueue() : bytes(0), stop(false), dropping(false), dropped(0), drops(0)
+    LiveQueue() : bytes(0), stop(false), dropping(false), paused(false), need_idr(false), condition_ready(false),
+                  dropped(0), drops(0)
     {
         pthread_mutex_init(&m, 0);
-        pthread_cond_init(&cv, 0);
+        pthread_condattr_t attr;
+        int rc = pthread_condattr_init(&attr);
+        if (!rc) {
+            rc = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+            if (!rc)
+                rc = pthread_cond_init(&cv, &attr);
+            pthread_condattr_destroy(&attr);
+        }
+        condition_ready = rc == 0;
     }
     ~LiveQueue()
     {
-        pthread_cond_destroy(&cv);
+        if (condition_ready)
+            pthread_cond_destroy(&cv);
         pthread_mutex_destroy(&m);
     }
 };
@@ -435,11 +447,16 @@ struct Capture {
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     long long max_usb_in_ms, max_usb_to_socket_ms, max_usb_out_ms;
     bool live, native_focus_pending;
+    std::string video_token;
+    const char* video_control;
+    const char* video_status;
+    std::string live_fifo;
     LiveQueue queue;
     Capture() : socket(-1), data(-1), index(-1), error(0), stop_reader(false), reader_error(0),
                 read_size(NBT_CAPTURE_MAX_TRANSFER), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
                 max_usb_in_ms(0), max_usb_to_socket_ms(0), max_usb_out_ms(0),
-                live(false), native_focus_pending(false)
+                live(false), native_focus_pending(false), video_control(NBT_VIDEO_CONTROL),
+                video_status(NBT_VIDEO_STATUS)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -447,19 +464,38 @@ struct Capture {
 };
 
 // Annex-B access unit contains an IDR slice (NAL type 5)?
-bool has_idr(const uint8_t* p, size_t n)
+bool has_nal(const uint8_t* p, size_t n, unsigned type)
 {
     for (size_t i = 0; i + 3 < n; ++i)
-        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1 && (p[i + 3] & 0x1f) == 5)
+        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1 && (p[i + 3] & 0x1f) == type)
             return true;
     return false;
 }
+
+bool has_idr(const uint8_t* p, size_t n) { return has_nal(p, n, 5); }
 
 // session thread: never blocks on the decoder
 void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
     LiveQueue& q = c->queue;
     pthread_mutex_lock(&q.m);
+    if (config) {
+        q.recovery_config.clear();
+        if (n <= 65536 && has_nal(p, n, 7) && has_nal(p, n, 8))
+            q.recovery_config.assign(p, p + n);
+    }
+    if (q.paused || (q.need_idr && (config || !has_idr(p, n) || q.recovery_config.empty()))) {
+        ++q.dropped;
+        pthread_mutex_unlock(&q.m);
+        return;
+    }
+    const bool recovering = q.need_idr;
+    if (recovering) {
+        q.items.clear();
+        q.bytes = 0;
+        q.need_idr = false;
+        q.dropping = false;
+    }
     // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
     // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
     // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
@@ -496,7 +532,9 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     q.dropping = false;
     q.items.push_back(std::vector<uint8_t>());
     std::vector<uint8_t>& v = q.items.back();
-    v.reserve(padded_size);
+    v.reserve(padded_size + (recovering ? q.recovery_config.size() : 0));
+    if (recovering)
+        v.insert(v.end(), q.recovery_config.begin(), q.recovery_config.end());
     v.insert(v.end(), p, p + n);
     if (padded_size > n) {
         const size_t fill = padded_size - n - 6;
@@ -719,6 +757,46 @@ void note_elapsed(long long& maximum, long long started)
         maximum = ended - started;
 }
 
+bool write_session_socket(Capture* c, const unsigned char* p, size_t n)
+{
+    const long long start = now_ms();
+    if (start < 0)
+        return false;
+    const long long deadline = start + 2000;
+    while (n && !reader_stopping(c)) {
+        const long long now = now_ms();
+        if (now < 0 || now >= deadline) {
+            printf("AA_CAPTURE_PUMP_ERROR operation=usb_to_session_socket cause=%s uptime_ms=%lld\n",
+                   now < 0 ? "clock" : "backpressure_timeout", now);
+            return false;
+        }
+        ssize_t written = send(c->socket, p, n, 0);
+        if (written > 0) {
+            p += written;
+            n -= (size_t)written;
+            continue;
+        }
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(c->socket, &set);
+            timeval wait = {0, 100000};
+            if (select(c->socket + 1, 0, &set, 0, &wait) < 0 && errno != EINTR) {
+                printf("AA_CAPTURE_PUMP_ERROR operation=usb_to_session_socket cause=select errno=%d uptime_ms=%lld\n",
+                       errno, now_ms());
+                return false;
+            }
+            continue;
+        }
+        printf("AA_CAPTURE_PUMP_ERROR operation=usb_to_session_socket cause=send errno=%d uptime_ms=%lld\n",
+               written < 0 ? errno : 0, now_ms());
+        return false;
+    }
+    return n == 0;
+}
+
 void* reader(void* v)
 {
     Capture* c = (Capture*)v;
@@ -736,7 +814,7 @@ void* reader(void* v)
             usleep(1000);
         else {
             const long long handoff_started = now_ms();
-            const bool written = write_all(c->socket, b, n);
+            const bool written = write_session_socket(c, b, n);
             note_elapsed(c->max_usb_to_socket_ms, handoff_started);
             if (!written) {
                 reader_stopping(c, "usb_to_session_socket");
@@ -756,18 +834,110 @@ long long now_ms()
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-// live mode writer: queue -> decoder FIFO. Waits as long as the decoder needs (the queue absorbs it), stops on a hard error.
+void pause_live_writer(Capture* c)
+{
+    if (c->data >= 0) {
+        close(c->data);
+        c->data = -1;
+    }
+    pthread_mutex_lock(&c->queue.m);
+    c->queue.paused = true;
+    c->queue.need_idr = false;
+    c->queue.items.clear();
+    c->queue.bytes = 0;
+    pthread_mutex_unlock(&c->queue.m);
+}
+
+bool video_writer_status(Capture* c, unsigned generation, const char* state)
+{
+    printf("AA_VIDEO_RECOVERY session=%s generation=%u state=%s uptime_ms=%lld\n",
+           c->video_token.c_str(), generation, state, now_ms());
+    if (video_recovery_publish(c->video_status, c->video_token.c_str(), generation, state))
+        return true;
+    printf("AA_VIDEO_RECOVERY_ERROR operation=publish errno=%d uptime_ms=%lld\n", errno, now_ms());
+    pthread_mutex_lock(&c->mutex);
+    c->error = 1;
+    pthread_mutex_unlock(&c->mutex);
+    return false;
+}
+
+// phase: 0 streaming, 1 paused, 2 waiting for the first fresh IDR, 3 peer lost.
+bool video_writer_control(Capture* c, unsigned& generation, int& phase)
+{
+    unsigned requested;
+    char state[32];
+    if (c->video_token.empty() ||
+        !video_recovery_read(c->video_control, c->video_token.c_str(), &requested, state, sizeof(state)))
+        return true;
+    if (!strcmp(state, "pause") && requested > generation) {
+        pause_live_writer(c);
+        generation = requested;
+        phase = 1;
+        return video_writer_status(c, generation, "paused");
+    }
+    if (phase == 1 && requested == generation && !strcmp(state, "ready")) {
+        struct stat st;
+        int error = 0;
+        int fd = open(c->live_fifo.c_str(), O_WRONLY | O_NONBLOCK);
+        if (fd < 0 && (errno == ENXIO || errno == EINTR))
+            return true;
+        if (fd < 0)
+            error = errno;
+        else if (fstat(fd, &st))
+            error = errno;
+        else if (!S_ISFIFO(st.st_mode))
+            error = EINVAL;
+        if (error) {
+            if (fd >= 0)
+                close(fd);
+            printf("AA_VIDEO_RECOVERY_ERROR session=%s generation=%u operation=reopen errno=%d uptime_ms=%lld\n",
+                   c->video_token.c_str(), generation, error, now_ms());
+            phase = 3;
+            return video_writer_status(c, generation, "failed");
+        }
+        c->data = fd;
+        pthread_mutex_lock(&c->queue.m);
+        c->queue.paused = false;
+        c->queue.need_idr = true;
+        pthread_mutex_unlock(&c->queue.m);
+        phase = 2;
+        return video_writer_status(c, generation, "opened");
+    }
+    return true;
+}
+
 void* live_writer(void* v)
 {
     Capture* c = (Capture*)v;
     LiveQueue& q = c->queue;
+    unsigned generation = 0;
+    int phase = 0;
     for (;;) {
+        if (!video_writer_control(c, generation, phase))
+            return 0;
         pthread_mutex_lock(&q.m);
-        while (q.items.empty() && !q.stop)
-            pthread_cond_wait(&q.cv, &q.m);
         if (q.stop) {
             pthread_mutex_unlock(&q.m);
             return 0;
+        }
+        if (q.items.empty() || q.paused) {
+            struct timespec deadline;
+            if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
+                pthread_mutex_unlock(&q.m);
+                pthread_mutex_lock(&c->mutex);
+                c->error = 1;
+                pthread_mutex_unlock(&c->mutex);
+                printf("AA_LIVE_WRITER_FAILED operation=clock errno=%d\n", errno);
+                return 0;
+            }
+            deadline.tv_nsec += 100000000;
+            if (deadline.tv_nsec >= 1000000000) {
+                ++deadline.tv_sec;
+                deadline.tv_nsec -= 1000000000;
+            }
+            pthread_cond_timedwait(&q.cv, &q.m, &deadline);
+            pthread_mutex_unlock(&q.m);
+            continue;
         }
         std::vector<uint8_t> item;
         item.swap(q.items.front());
@@ -776,6 +946,11 @@ void* live_writer(void* v)
         pthread_mutex_unlock(&q.m);
         size_t off = 0;
         while (off < item.size()) {
+            const unsigned previous_generation = generation;
+            if (!video_writer_control(c, generation, phase))
+                return 0;
+            if (generation != previous_generation || phase == 1 || phase == 3)
+                break;
             ssize_t k = write(c->data, &item[off], item.size() - off);
             if (k > 0) {
                 off += (size_t)k;
@@ -783,7 +958,7 @@ void* live_writer(void* v)
             }
             if (k < 0 && errno == EINTR)
                 continue;
-            if (k < 0 && errno == EAGAIN) { // FIFO full: wait for the decoder, unless we are stopping
+            if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                 pthread_mutex_lock(&q.m);
                 bool stop = q.stop;
                 pthread_mutex_unlock(&q.m);
@@ -798,10 +973,22 @@ void* live_writer(void* v)
             }
             const int error = k < 0 ? errno : 0;
             printf("AA_LIVE_WRITER_FAILED errno=%d uptime_ms=%lld\n", error, now_ms());
+            if (error == EPIPE && !c->video_token.empty()) {
+                pause_live_writer(c);
+                phase = 3;
+                if (!video_writer_status(c, generation, "fault"))
+                    return 0;
+                break;
+            }
             pthread_mutex_lock(&c->mutex);
             c->error = 1;
             pthread_mutex_unlock(&c->mutex);
             return 0;
+        }
+        if (off == item.size() && phase == 2) {
+            phase = 0;
+            if (!video_writer_status(c, generation, "running"))
+                return 0;
         }
     }
 }
@@ -909,6 +1096,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
         return 2;
     signal(SIGPIPE, SIG_IGN);
     Capture c;
+    if (!c.queue.condition_ready) {
+        puts("AA_VIDEO_CAPTURE_START_FAILED cannot initialize video queue condition");
+        return 3;
+    }
     c.transfer = transfer;
     c.transport = context;
     c.read_size = read_size;
@@ -941,6 +1132,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
             }
         }
         c.live = true;
+        c.live_fifo = live_fifo;
+        const char* video_token = getenv("NBT_AA_VIDEO_SESSION");
+        if (video_token)
+            c.video_token = video_token;
         c.frame_limit = ~0u;
         seconds = 0;
         live_stop = 0;
@@ -965,6 +1160,15 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
         return 2;
     }
     c.socket = pair[1];
+    const int socket_flags = fcntl(c.socket, F_GETFL);
+    if (socket_flags < 0 || fcntl(c.socket, F_SETFL, socket_flags | O_NONBLOCK) < 0) {
+        printf("AA_CAPTURE_PUMP_ERROR operation=socket_nonblocking errno=%d\n", errno);
+        close(pair[0]);
+        close(pair[1]);
+        close(c.data);
+        close(c.index);
+        return 3;
+    }
     nbt::AASession session;
     session.setVideoFrameCallback(video, &c);
     session.setCodecConfigCallback(config, &c);
@@ -1066,6 +1270,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
     const char* bg = getenv("NBT_AA_BG_FOCUS");
     const bool bg_focus = c.live && bg && !strcmp(bg, "1");
     int shown_state = 1;
+    unsigned refreshed_generation = 0;
     long long next_focus_check = 0;
     FocusHandoff handoff;
     const long long start = now_ms();
@@ -1157,6 +1362,17 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
                 session.postVideoFocus(true);
             if (handoff.tick(tm, visible, bg_focus, shown_state, kExitRequest))
                 session.postVideoFocus(true);
+            if (!c.video_token.empty() && visible && !handoff.pending && !native_requested) {
+                unsigned generation;
+                char state[32];
+                if (video_recovery_read(c.video_status, c.video_token.c_str(), &generation, state, sizeof(state)) &&
+                    generation > refreshed_generation && !strcmp(state, "opened")) {
+                    refreshed_generation = generation;
+                    session.postVideoFocus(true);
+                    printf("AA_VIDEO_RECOVERY session=%s generation=%u state=focus_refresh uptime_ms=%lld\n",
+                           c.video_token.c_str(), generation, tm);
+                }
+            }
         }
         if (!bye_until && bg_focus && !handoff.pending && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;
@@ -1187,7 +1403,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
         if (ready && FD_ISSET(c.socket, &fds)) { // session -> phone
             unsigned char b[NBT_CAPTURE_MAX_TRANSFER];
             ssize_t n = recv(c.socket, b, sizeof(b), 0);
-            if (n < 0 && errno == EINTR)
+            if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
                 continue;
             if (n <= 0) {
                 if (n < 0) {
