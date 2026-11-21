@@ -362,14 +362,14 @@ static int alive(Child* c)
     return r == 0;
 }
 
-/* stop a child and its whole process group: SIGTERM, up to 5 s grace, then SIGKILL */
-static void end(Child* c)
+/* Stop a child and its whole process group, then SIGKILL after the caller's bounded grace. */
+static void end_after(Child* c, long long grace_ms)
 {
     long long until;
     if (!alive(c))
         return;
     kill(-c->pid, SIGTERM);
-    until = ms() + 5000;
+    until = ms() + grace_ms;
     while (alive(c) && ms() < until)
         usleep(20000);
     if (alive(c)) {
@@ -381,6 +381,11 @@ static void end(Child* c)
         }
         c->pid = 0;
     }
+}
+
+static void end(Child* c)
+{
+    end_after(c, 5000);
 }
 
 /* start args[0] in its own process group, stdin from input (or /dev/null), stdout+stderr to log (or /dev/null) */
@@ -1136,7 +1141,10 @@ int main(int argc, char** argv)
         end(&hwv);
         if (center)
             hmi_visible();
-        end(&capture);
+        /* An OUT transfer plus its packet terminator can each take the bounded USB wait. The capture observes the
+         * signal, cancels outstanding URBs and joins first, so allow that path to finish rather than SIGKILLing the
+         * process while io-usb still owns a callback. */
+        end_after(&capture, 10000);
         if (*session_end && !stopping)
             incident("session-end", session_end, 30000);
         audio_route_cleanup();
@@ -1173,7 +1181,7 @@ done:
     end(&hwv);
     if (center)
         hmi_visible();
-    end(&capture);
+    end_after(&capture, 10000);
     audio_route_cleanup();
     end(&http);
     end(&decoder);

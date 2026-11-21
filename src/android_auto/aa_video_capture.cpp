@@ -882,7 +882,9 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
 // prefix:   capture mode file prefix (must be under /fs/ram3/nbt-aa- when running as root).
 // Returns 0 = session received valid config and video without a capture or pump error, 2 = bad arguments / files,
 // 3 = failure.
-extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* context, const char* prefix, unsigned read_size)
+extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_cancel cancel,
+                                     nbt_capture_stop_requested stop_requested,
+                                     void* context, const char* prefix, unsigned read_size)
 {
     if (!transfer || !prefix || !*prefix || strlen(prefix) > 200 || !read_size || read_size > NBT_CAPTURE_MAX_TRANSFER)
         return 2;
@@ -1071,6 +1073,11 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         const bool output_error = c.error;
         const bool frame_limit = c.frames >= c.frame_limit;
         pthread_mutex_unlock(&c.mutex);
+        if (stop_requested && stop_requested(context)) {
+            stop_reason = "usb_removed";
+            pump_error = true;
+            break;
+        }
         if (!bye_until) {
             const int signo = live_stop;
             if (signo)
@@ -1197,6 +1204,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     printf("AA_VIDEO_CAPTURE_STOP reason=%s local_shutdown=%s uptime_ms=%lld\n",
            stop_reason, bye_reason ? bye_reason : "none", now_ms());
     shutdown(c.socket, SHUT_RDWR);
+    if (cancel)
+        cancel(context);
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in
@@ -1204,7 +1213,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         unlink(kExitRequest);
     }
-    // USB reader's individual transfer is bounded; no cancellation of a live URB.
+    // cancel() aborts the reader URB before joining; transfer callbacks must not own Capture memory.
     pthread_join(thread, 0);
     if (have_writer) {
         pthread_mutex_lock(&c.queue.m);
