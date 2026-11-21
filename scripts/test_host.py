@@ -43,6 +43,7 @@ def main():
             ("src/android_auto/tests/test_usb_zlp_policy.cpp", [], []),
             ("src/android_auto/tests/test_usb_transfer_lifecycle.cpp", [], ["-pthread"]),
             ("src/android_auto/tests/test_aoa_reenumeration.cpp", [], []),
+            ("src/android_auto/tests/test_native_switch.c", [], []),
             ("src/android_auto/tests/test_usb_transport_diag.cpp", [], []),
             ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")], []),
             ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
@@ -57,7 +58,10 @@ def main():
         ]
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
-            subprocess.run([os.environ.get("CXX", "g++"), *flags, *extra_flags, str(ROOT / source),
+            compiler = os.environ.get("CC", "cc") if source.endswith(".c") else os.environ.get("CXX", "g++")
+            source_flags = (["-std=gnu99" if flag == "-std=gnu++0x" else flag for flag in flags]
+                            if source.endswith(".c") else flags)
+            subprocess.run([compiler, *source_flags, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)
 
