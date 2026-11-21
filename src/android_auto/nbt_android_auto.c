@@ -149,24 +149,14 @@ static void completed(struct usbd_urb* urb, struct usbd_pipe* pipe, void* contex
 static int await_completion(struct completion* c, unsigned milliseconds) {
     return usb_wait_await(&c->wait, milliseconds);
 }
+static int bulk_stopping(void* context) {
+    return usb_transfer_is_stopping((struct usb_transfer_lifecycle*)context);
+}
 static int await_bulk_completion(struct completion* c, unsigned milliseconds,
                                  struct usb_transfer_lifecycle* lifecycle) {
-    unsigned waited_ms = 0;
     if (!lifecycle)
         return await_completion(c, milliseconds);
-    while (waited_ms < milliseconds) {
-        int result;
-        unsigned slice = milliseconds - waited_ms;
-        if (slice > 100)
-            slice = 100;
-        if (usb_transfer_is_stopping(lifecycle))
-            return -ECANCELED;
-        result = await_completion(c, slice);
-        if (result != 0)
-            return result;
-        waited_ms += slice;
-    }
-    return 0;
+    return usb_wait_await_cancellable(&c->wait, milliseconds, bulk_stopping, lifecycle);
 }
 struct bulk_submit {
     struct usbd_urb* urb;
