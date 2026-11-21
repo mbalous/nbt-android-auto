@@ -6,7 +6,7 @@
 #include <fstream>
 #include <iterator>
 struct FakeUsb {int fd,result;const char* prefix;unsigned read_size;int cancelled;};
-static void fake_cancel(void* v) {
+static void fake_cancel(void* v, int) {
     FakeUsb* f=(FakeUsb*)v;
     ++f->cancelled;
     shutdown(f->fd,SHUT_RDWR);
@@ -28,7 +28,7 @@ static int fake_transfer(void* v,int input,unsigned char* p,unsigned* size) {
 }
 static void* capture_thread(void* p) {
     FakeUsb* f=(FakeUsb*)p;
-    f->result=nbt_video_capture_run(fake_transfer,fake_cancel,fake_stop_requested,f,f->prefix,f->read_size);
+    f->result=nbt_video_capture_run(fake_transfer,fake_cancel,fake_stop_requested,0,f,f->prefix,f->read_size);
     return 0;
 }
 static Bytes read_file(const char* p) {
