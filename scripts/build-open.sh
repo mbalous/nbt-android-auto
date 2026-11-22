@@ -15,6 +15,10 @@ CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
 LIBS="-lqnxopen"
 AR=$T-ar
+echo ABI_TOOLCHAIN_INFO_BEGIN
+$T-gcc --version
+$T-ld --version
+echo ABI_TOOLCHAIN_INFO_END
 TLSINC="-I$W/mbedtls-3.6.7/include"
 TLSLIBS="$W/mbedtls-3.6.7/library/libmbedtls.a $W/mbedtls-3.6.7/library/libmbedx509.a $W/mbedtls-3.6.7/library/libmbedcrypto.a"
 AAINC="$TLSINC -I$W/reference/src -I$W/reference/include"

@@ -71,3 +71,40 @@ space-separated subset; unknown names fail rather than producing a misleading su
 CI checks the built binaries' ELF class and architecture and retains the experimental programs, resources, build log,
 SHA-256 hashes and `readelf` metadata as a workflow artifact for 14 days. The report supports comparison with an SDP
 build; it does not prove ABI compatibility or make the artifacts safe for vehicle deployment.
+
+## ABI comparison and VM probes
+
+The open and SDP builders write `abi-inputs.json` with the prepared source digest, revision and dirty status, pinned
+inputs, compiler/linker information, HMI link mode, and binary hashes and origins. The open build also hashes its
+installed compiler and sysroot. A matching source digest is not proof of equivalent flags, libraries or runtimes.
+
+From the same clean revision, make fresh builds without `--reuse`; use the paths printed by the builders:
+
+```sh
+python3 scripts/build_open.py
+python3 scripts/build_all.py --hmi-libs '$HOME/.nbt-build/hmi-libs'
+python3 scripts/compare_qnx_abi.py --open build/open-build-<id> --sdp build/qnx-build-<id> \
+  --output build/abi-comparison.json
+```
+
+An optional `--reference <local-payload-or-backup>` includes an older local binary reference, for observation only.
+Keep private reference binaries and reports local. The JSON inventories dynamic symbols, versions, loader,
+dependencies, search paths and relocations; missing and reused outputs are explicit. Dirty or mismatched provenance
+is observational. Differences are advisory, but malformed ELF files and extraction or hash errors fail. CI uploads
+an open-only inventory and does not need SDP or vehicle inputs.
+
+With the documented, trusted host-only QNX VM reachable over SSH, the following builds and runs a separate probe with
+both compilers under the non-root VM user. Replace the address with the verified VM address:
+
+```sh
+python3 scripts/test_open_abi_vm.py --vm-address 192.168.56.101
+```
+
+On Fedora, a VM whose SSH server only offers `ssh-rsa` may require prefixing this command and `build_all.py` with
+`OPENSSL_ENABLE_SHA1_SIGNATURES=1`. Apply it only to the command using the trusted, host-key-pinned VM; do not weaken
+the system-wide crypto policy.
+
+Evidence in `build/open-abi-probe-*` covers constructor/destructor execution, libc and thread-local `errno`, selected
+USB layouts and constants, iovec bytes, and `devctlv` lookup and its invalid-descriptor error path. It does not load
+the plugin, exercise USB hardware, start a vehicle service, or establish behavior on the car. VM files are retained
+on failure. `accessory_window` remains unsupported; the HMI and C++ runtime boundaries still need validation.

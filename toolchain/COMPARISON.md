@@ -89,3 +89,29 @@ and `libc.so.3`. These are **SDP observations**, not verified properties of the 
 
 The historical comparisons in [README.md](README.md#how-it-differs-from-an-sdp-build) concern earlier sources and
 cannot substitute for these checks on the current code.
+
+## Repeatable local comparison
+
+The current builders record `abi-inputs.json`, and `scripts/compare_qnx_abi.py` produces a normalized JSON inventory
+and advisory diff. See [README.md](README.md#abi-comparison-and-vm-probes) for fresh-build, local-reference and
+isolated VM probe commands. The comparison labels older builds without this provenance and dirty-source builds
+observational, even when some binaries or dependencies match. A matching clean source digest does not establish ABI
+equivalence. The probe tests only its listed paths and does not validate real USB devices, HMI loading or the vehicle.
+
+On a QNX 6.5 x86 VM, a paired GCC 4.4.2 probe found that the open USB descriptor declarations were packed more
+tightly than the SDP types. The configuration and endpoint descriptor sizes were 9 and 7 bytes in the open sysroot,
+versus 10 and 8 with SDP; several descriptor and union alignments were 1 instead of 2. The tested field offsets
+matched. After changing the project-written declarations to natural alignment, the same probe source produced
+matching results for these layouts, the tested constants and iovec representation, constructor/destructor execution,
+thread-local libc `errno`, and `devctlv` lookup and the invalid-descriptor error path. This is limited VM evidence,
+not proof that descriptors can be serialized using `sizeof` or that USB and HMI behavior is compatible on the car.
+Rebuilding the same staged sources with an isolated copy of the pre-fix header produced byte-identical binaries for
+all 10 currently supported open outputs; the copied compiler/sysroot differed only in that header.
+
+A subsequent fresh open/SDP comparison on the current worktree had matching prepared-source hashes for 10 common
+programs. The worktree was dirty, so the report correctly labels it observational; the SDP-only outputs were
+`accessory_window`, `nbt_key` and `nbt_a2i_beep`. Among the remaining differences, the open C++ executables omit
+the dynamic `libcpp.so.4` dependency because they use static GNU libstdc++, and the open plugin lacks the SDP
+plugin's exported `__divdi3` and differs in startup-related imports and relocations. These observations have not
+been established as equivalent at the HMI boundary. Inspect the generated comparison for the complete details;
+neither this build nor the probe authorizes deployment.

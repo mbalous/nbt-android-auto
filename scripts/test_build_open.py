@@ -56,6 +56,7 @@ class OpenBuildTests(unittest.TestCase):
                     mock.patch.object(build_open, "add_mbedtls"), \
                     mock.patch.object(build_open, "add_nbt_aad"), \
                     mock.patch.object(build_open, "add_repo_sources"), \
+                    mock.patch.object(build_open, "capture_inputs"), \
                     mock.patch.object(sys, "argv", args), \
                     mock.patch.object(build_open.subprocess, "run",
                                       return_value=subprocess.CompletedProcess([], 0, b"BUILD_OPEN_DONE")):
