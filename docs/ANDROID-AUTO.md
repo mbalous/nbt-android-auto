@@ -7,6 +7,21 @@ the original builds.
 > (`Inspect-NbtVideoCapture.py`, `Test-CinemoPixels.py`, `Prepare-NbtVideoFixture.py`, `test_cinemo_*.c`) now live in
 > [experiments/png-pipeline/](../experiments/png-pipeline/). For the current structure see [src/README.md](../src/README.md).
 
+## Interpreting dropout diagnostics
+
+For current builds, correlate `AA_USB_CAPTURE_TARGET session=...` in the capture log with
+`AA_VIDEO_RECOVERY session=... generation=...` and the matching `fifo-http-<session>.<generation>.log`.
+Compare the earliest monotonic `uptime_ms` events before interpreting the later `AA_VIDEO_CAPTURE_STOP`,
+`AA_USB_CANCEL`, or supervisor reset as the cause. `AA_USB_*_CANCELLED` describes intentional shutdown;
+`AA_USB_*_FAILED` reports the transfer phase, completion result and raw status. `actual_valid=0` means
+the reported byte count is not trusted. `DEV_NOANSWER` does not prove a physical unplug, and partial or
+indeterminate USB transfers are not replayed.
+
+The normal video chain can make one video-only restart per incident while keeping the USB capture alive.
+`paused`, `opened`, and `running` record progress; `running` follows delivery of codec configuration and an
+IDR frame. A failed restart falls back to session teardown. Logs can show where the pipeline stopped, but
+host tests and these diagnostics cannot establish the cause of an EHCI or phone-side USB failure.
+
 Status: 2026-11-06. User selected USB and a OnePlus 7 Pro running OxygenOS 12
 (Android 12). Hello NBT menu and text page are visually confirmed on the car.
 The protocol core now builds as a QNX x86 static library with an alternative

@@ -155,6 +155,99 @@ void test_live_recovery()
     expect_live_output(c, frame);
 }
 
+void wait_video_status(const char* path, const char* token, unsigned expected, const char* wanted)
+{
+    for (unsigned i = 0; i < 500; ++i) {
+        unsigned generation;
+        char state[32];
+        if (video_recovery_read(path, token, &generation, state, sizeof(state)) &&
+            generation == expected && !strcmp(state, wanted))
+            return;
+        usleep(10000);
+    }
+    require(false, "video recovery status timed out");
+}
+
+void test_fifo_reconnect()
+{
+    char directory[] = "/tmp/nbt-video-recovery-XXXXXX";
+    require(mkdtemp(directory) != 0, "create video recovery directory");
+    const std::string base(directory);
+    const std::string fifo = base + "/video.fifo";
+    const std::string control = base + "/control";
+    const std::string status = base + "/status";
+    require(mkfifo(fifo.c_str(), 0600) == 0, "create video FIFO");
+    int reader_fd = open(fifo.c_str(), O_RDONLY | O_NONBLOCK);
+    require(reader_fd >= 0, "open first FIFO reader");
+    Capture c;
+    c.live = true;
+    c.live_fifo = fifo.c_str();
+    c.video_control = control.c_str();
+    c.video_status = status.c_str();
+    c.video_token = "test-session";
+    c.data = open(fifo.c_str(), O_WRONLY | O_NONBLOCK);
+    require(c.data >= 0, "open FIFO writer");
+    pthread_t writer;
+    require(pthread_create(&writer, 0, live_writer, &c) == 0, "start recovery writer");
+    config(kConfig, sizeof(kConfig), &c);
+    close(reader_fd);
+    feed_video(kFrame, sizeof(kFrame), 1, &c);
+    wait_video_status(status.c_str(), c.video_token.c_str(), 0, "fault");
+    require(!c.error, "FIFO reader loss must not end the session");
+    require(video_recovery_publish(control.c_str(), "old-session", 1, "pause"), "publish stale request");
+    usleep(150000);
+    unsigned generation;
+    char state[32];
+    require(video_recovery_read(status.c_str(), c.video_token.c_str(), &generation, state, sizeof(state)) &&
+            generation == 0 && !strcmp(state, "fault"), "ignore stale session");
+    require(video_recovery_publish(control.c_str(), c.video_token.c_str(), 1, "pause"), "request pause");
+    wait_video_status(status.c_str(), c.video_token.c_str(), 1, "paused");
+    reader_fd = open(fifo.c_str(), O_RDONLY | O_NONBLOCK);
+    require(reader_fd >= 0, "open replacement FIFO reader");
+    require(video_recovery_publish(control.c_str(), c.video_token.c_str(), 1, "ready"), "mark decoder ready");
+    wait_video_status(status.c_str(), c.video_token.c_str(), 1, "opened");
+    feed_video(kFrame, sizeof(kFrame), 2, &c);
+    usleep(100000);
+    uint8_t byte;
+    require(read(reader_fd, &byte, 1) < 0 && errno == EAGAIN, "dependent frame must not restart decoder");
+    const uint8_t idr[] = {0, 0, 0, 1, 0x65, 0xaa};
+    feed_video(idr, sizeof(idr), 3, &c);
+    wait_video_status(status.c_str(), c.video_token.c_str(), 1, "running");
+    expect_bytes(reader_fd, kConfig, sizeof(kConfig));
+    const uint8_t padded_idr[] = {
+        0, 0, 0, 1, 0x65, 0xaa, 0, 0, 0, 1, 0x0c,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80
+    };
+    expect_bytes(reader_fd, padded_idr, sizeof(padded_idr));
+    pthread_mutex_lock(&c.queue.m);
+    c.queue.stop = true;
+    pthread_cond_signal(&c.queue.cv);
+    pthread_mutex_unlock(&c.queue.m);
+    require(pthread_join(writer, 0) == 0, "join recovery writer");
+    close(c.data);
+    close(reader_fd);
+    unlink(fifo.c_str());
+    unlink(control.c_str());
+    unlink(status.c_str());
+    require(rmdir(directory) == 0, "remove recovery directory");
+}
+
+void test_socket_backpressure()
+{
+    int pair[2], size = 4096;
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0, "open handoff pair");
+    require(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0, "limit handoff buffer");
+    require(fcntl(pair[0], F_SETFL, O_NONBLOCK) == 0, "set handoff nonblocking");
+    Capture c;
+    c.socket = pair[0];
+    std::vector<uint8_t> data(65536, 0xa5);
+    long long start = now_ms();
+    require(!write_session_socket(&c, &data[0], data.size()), "stalled handoff must fail");
+    require(now_ms() - start >= 1800 && now_ms() - start < 4000, "handoff is bounded");
+    close(pair[0]);
+    close(pair[1]);
+}
+
 struct FakeBulkIn {
     Capture* capture;
     unsigned calls;
@@ -340,11 +433,14 @@ void test_focus_handoff()
 
 int main()
 {
-    alarm(15);
+    alarm(25);
+    signal(SIGPIPE, SIG_IGN);
     require(setenv("NBT_AA_PAD", "24", 1) == 0, "set test padding");
     test_diagnostic_capture();
     test_live_stream();
     test_live_recovery();
+    test_fifo_reconnect();
+    test_socket_backpressure();
     test_padded_queue_budget();
     test_bulk_reader(false);
     test_bulk_reader(true);

@@ -27,7 +27,7 @@ F=$D/`date +%Y%m%d-%H%M%S`-$K-$$.txt
   echo '--- plugin log'; tail -120 /fs/ram3/nbt-aa-plugin.log 2>/dev/null
   echo '--- boot log'; tail -30 /fs/ram3/nbt-aa-boot.log 2>/dev/null
   for f in `ls -t $R/capture-*.log 2>/dev/null | sed 2q`; do echo "--- $f"; tail -150 $f; done
-  for f in `ls -t $R/decoder-*.log 2>/dev/null | sed 1q` `ls -t $R/hwvideo-*.log 2>/dev/null | sed 1q`; do
+  for f in `ls -t $R/decoder-*.log 2>/dev/null | sed 2q` `ls -t $R/fifo-http-*.log 2>/dev/null | sed 2q` `ls -t $R/hwvideo-*.log 2>/dev/null | sed 1q`; do
     echo "--- $f"; tail -60 $f
   done
   echo '--- knob'; tail -60 $R/knob.log 2>/dev/null

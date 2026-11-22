@@ -67,6 +67,10 @@ static long long monotonic_ms(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &t) != EOK) return -1;
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
+static const char* capture_session_id(void) {
+    const char* id = getenv("NBT_AA_VIDEO_SESSION");
+    return id && *id ? id : "none";
+}
 static void inserted(struct usbd_connection* c, usbd_device_instance_t* d) {
     (void)c;
     if (d->path != target_bus || d->devno != target_device ||
@@ -214,18 +218,26 @@ static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigne
     if (rc == EOK) waited = await_bulk_completion(&c, timeout_ms + 1000, lifecycle);
     else waited = 0;
     if (rc == EOK && waited != 1) {
-        int abort_rc;
-        puts(waited == -ECANCELED ? "AA_BULK_CANCEL_ABORTING_NO_RETRY" :
-             "AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
-        abort_rc = usbd_abort_pipe(pipe);
-        if (abort_rc != EOK)
-            printf("AA_BULK_ABORT_FAILED rc=%d\n", abort_rc);
+        int abort_owned = !lifecycle || usb_transfer_claim_abort(lifecycle, input);
+        printf("AA_BULK_WAIT_END session=%s direction=%s cause=%s abort_owned=%d retry=0 uptime_ms=%lld\n",
+               capture_session_id(), input ? "IN" : "OUT", waited == -ECANCELED ? "cancelled" :
+               waited == 0 ? "callback_timeout" : "wait_error", abort_owned, monotonic_ms());
+        if (abort_owned)
+            printf("AA_BULK_ABORT direction=%s initiator=wait rc=%d uptime_ms=%lld\n",
+                   input ? "IN" : "OUT", usbd_abort_pipe(pipe), monotonic_ms());
         if (await_completion(&c, 1000) != 1) {
             /* Do not free buffers/URBs still referenced by the USB callback. */
             puts("AA_BULK_ABORT_UNCONFIRMED_EXITING_NO_RETRY");
             _exit(6);
         }
-        rc = waited < 0 ? -waited : ETIMEDOUT;
+        if (waited == -ECANCELED && c.rc != EINTR
+#ifdef USBD_STATUS_ABORTED
+            && !(c.rc == EOK && (c.status & USBD_URB_STATUS_MASK) == USBD_STATUS_ABORTED)
+#endif
+           )
+            rc = EOK; /* Preserve the callback result for attribution and diagnostics. */
+        else
+            rc = waited < 0 ? -waited : ETIMEDOUT;
     }
     if (lifecycle && rc != USB_TRANSFER_STOPPED)
         usb_transfer_finished(lifecycle, input);
@@ -289,10 +301,7 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
     pthread_mutex_lock(&c->diagnostics_mutex);
     usb_observation_begin(&c->observation[input], began_ms);
     pthread_mutex_unlock(&c->diagnostics_mutex);
-    /* Session reads (car 2026-11-17: a session ended with "Phone closed socket or read error" after 94 s of normal
-     * streaming, no RX-timeout message): a bulk IN read gave up after 2 s without data, which ended the reader and the
-     * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
-     * logged with its USB status, so a real USB drop can be told from a pause. */
+    /* AASession's wired watchdog exceeds this timeout, the callback/abort grace and the socket handoff bound. */
     rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,
                        &completion_rc,input?8000:2000,&c->lifecycle,&phase,capture_callback_observed,c);
     {
@@ -315,10 +324,14 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         const long long failed_at_ms = monotonic_ms();
         long long removal_ms;
         unsigned removal_seen = removal_snapshot(&removal_ms);
-        printf("AA_USB_%s_%s rc=%d status=%08x bytes=%u completion_rc=%d requested=%u "
-               "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
+        printf("AA_USB_%s_%s session=%s rc=%d status=%08x bytes=%u completion_rc=%d requested=%u "
+               "phase=%u submitted=%d callback=%d class=%s actual_valid=%d retry=0 "
+               "elapsed_ms=%lld uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
                input?"IN":"OUT",interrupted?"INTERRUPTED_OUTCOME_UNKNOWN":"FAILED",
-               rc,(unsigned)status,(unsigned)actual,completion_rc,*size,
+               capture_session_id(),rc,(unsigned)status,(unsigned)actual,completion_rc,*size,phase,
+               phase >= USB_TRANSFER_PHASE_CALLBACK,completion_rc != -1,
+               usb_diag_status_class(completion_rc, status), completion_rc == EOK,
+               began_ms >= 0 && failed_at_ms >= began_ms ? failed_at_ms - began_ms : -1,
                failed_at_ms,removal_seen,removal_ms);
         return 0;
     }
@@ -327,11 +340,12 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
         /* A packet-aligned bulk OUT transfer needs a ZLP so the phone's gadget read terminates. */
         _Uint32t zlp_status = 0, zlp_actual = 0;
         int zlp_completion_rc;
+        unsigned zlp_phase = USB_TRANSFER_PHASE_NONE;
         pthread_mutex_lock(&c->diagnostics_mutex);
         usb_observation_begin(&c->observation[0], monotonic_ms());
         pthread_mutex_unlock(&c->diagnostics_mutex);
         int zlp_rc = bulk_transfer_t(c->urb[0], c->pipe[0], c->dma[0], 0, 0,
-                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle, 0,
+                                     &zlp_status, &zlp_actual, &zlp_completion_rc, 2000, &c->lifecycle, &zlp_phase,
                                      capture_callback_observed, c);
         const int zlp_ok = usb_zlp_succeeded(zlp_rc, zlp_completion_rc, zlp_status,
                                              USBD_URB_STATUS_MASK, USBD_STATUS_CMP, zlp_actual);
@@ -347,10 +361,13 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
             const long long failed_at_ms = monotonic_ms();
             long long removal_ms;
             unsigned removal_seen = removal_snapshot(&removal_ms);
-            printf("AA_USB_OUT_%s rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
+            printf("AA_USB_OUT_%s session=%s rc=%d status=%08x bytes=%u completion_rc=%d requested=0 "
+                   "phase=%u submitted=%d callback=%d class=%s actual_valid=%d retry=0 "
                    "uptime_ms=%lld removal_seen=%u removal_ms=%lld\n",
-                   interrupted?"INTERRUPTED_OUTCOME_UNKNOWN":"FAILED",
-                   zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
+                   interrupted ? "INTERRUPTED_OUTCOME_UNKNOWN" : "FAILED",
+                   capture_session_id(),zlp_rc, (unsigned)zlp_status, (unsigned)zlp_actual, zlp_completion_rc,
+                   zlp_phase,zlp_phase >= USB_TRANSFER_PHASE_CALLBACK,zlp_completion_rc != -1,
+                   usb_diag_status_class(zlp_completion_rc, zlp_status), zlp_completion_rc == EOK,
                    failed_at_ms, removal_seen, removal_ms);
             return 0;
         }
@@ -377,7 +394,7 @@ static void capture_cancel(void* context, int clean_shutdown) {
     pthread_mutex_unlock(&c->diagnostics_mutex);
     if (active & 1) {
         rc = usbd_abort_pipe(c->pipe[0]);
-        printf("AA_USB_CANCEL direction=OUT rc=%d\n", rc);
+        printf("AA_USB_CANCEL direction=OUT initiator=shutdown rc=%d uptime_ms=%lld\n", rc, monotonic_ms());
         if (rc != EOK) {
             pthread_mutex_lock(&c->diagnostics_mutex);
             c->diagnostics[0].abort_failures = usb_diag_saturate_add(c->diagnostics[0].abort_failures);
@@ -386,7 +403,7 @@ static void capture_cancel(void* context, int clean_shutdown) {
     }
     if (active & 2) {
         rc = usbd_abort_pipe(c->pipe[1]);
-        printf("AA_USB_CANCEL direction=IN rc=%d\n", rc);
+        printf("AA_USB_CANCEL direction=IN initiator=shutdown rc=%d uptime_ms=%lld\n", rc, monotonic_ms());
         if (rc != EOK) {
             pthread_mutex_lock(&c->diagnostics_mutex);
             c->diagnostics[1].abort_failures = usb_diag_saturate_add(c->diagnostics[1].abort_failures);
@@ -407,11 +424,11 @@ static void capture_diagnostics(struct capture_usb* c, const char* kind) {
         const struct usb_transfer_diag* d = &diagnostics[i];
         const long long in_flight_ms = observations[i].in_flight && observations[i].started_ms >= 0 &&
                                       now >= observations[i].started_ms ? now - observations[i].started_ms : -1;
-        printf("AA_USB_TRANSPORT_%s direction=%s attempts=%llu bytes_requested=%llu bytes_actual=%llu "
+        printf("AA_USB_TRANSPORT_%s session=%s direction=%s attempts=%llu bytes_requested=%llu bytes_actual=%llu "
                "failures=%u interruptions=%u abort_failures=%u zlp_attempts=%u zlp_failures=%u max_request=%u max_actual=%u "
                "max_elapsed_ms=%u in_flight_ms=%lld first_phase=%u first_rc=%d first_completion_rc=%d "
                "first_status=%08x first_request=%u first_actual=%u first_elapsed_ms=%u\n",
-               kind, i ? "IN" : "OUT", d->attempts, d->bytes_requested, d->bytes_actual,
+               kind, capture_session_id(), i ? "IN" : "OUT", d->attempts, d->bytes_requested, d->bytes_actual,
                d->failures, d->interruptions, d->abort_failures, d->zlp_attempts, d->zlp_failures, d->max_request, d->max_actual,
                d->max_elapsed_ms, in_flight_ms, d->first_failure, d->first_io_rc, d->first_completion_rc,
                d->first_status, d->first_request, d->first_actual, d->first_elapsed_ms);
@@ -549,9 +566,9 @@ static int version_probe(struct usbd_device* device, const usbd_device_instance_
         if(c.out_max_packet && c.urb[0] && c.urb[1] && c.dma[0] && c.dma[1]) {
             long long removal_ms;
             unsigned removal_seen;
-            printf("AA_USB_CAPTURE_TARGET bus=%u device=%u generation=%u in=0x%02x out=0x%02x "
+            printf("AA_USB_CAPTURE_TARGET session=%s bus=%u device=%u generation=%u in=0x%02x out=0x%02x "
                    "read_size=%u in_max_packet=%u out_max_packet=%u uptime_ms=%lld\n",
-                   (unsigned)instance->path,(unsigned)instance->devno,(unsigned)instance->generation,
+                   capture_session_id(),(unsigned)instance->path,(unsigned)instance->devno,(unsigned)instance->generation,
                    (unsigned)bin->endpoint.bEndpointAddress,(unsigned)bout->endpoint.bEndpointAddress,c.capacity[1],
                    usb_packet_size((unsigned)bin->endpoint.wMaxPacketSize),c.out_max_packet,monotonic_ms());
             result=nbt_video_capture_run(capture_transfer,capture_cancel,capture_stop_requested,capture_snapshot,

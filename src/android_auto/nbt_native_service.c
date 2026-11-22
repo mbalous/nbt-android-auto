@@ -43,6 +43,7 @@
 
 #include "service_lock.h"
 #include "aoa_reenumeration.h"
+#include "video_recovery.h"
 
 #define RUNTIME_DIR "/fs/ram3/nbt-aa-native"
 /* the package folder on flash: switch and config files the user creates live here (native_service itself runs in
@@ -727,6 +728,109 @@ static Child start_hwvideo(int center, int right, unsigned session, unsigned res
     return c;
 }
 
+static int start_video_chain(Child* http, Child* decoder, Child* frames, Child* hwv, Child* capture,
+                             int hw, int wal, int center, int ana, int right, int res720, char** wargv,
+                             unsigned session, unsigned generation)
+{
+    char *http_args[] = {"./fifo_http", "annexb.fifo", "http.ready", 0};
+    char *frame_args[] = {"./native_frames", "--seconds", "0", "--fps", "3", 0};
+    char *decoder_args[] = {"./decode_runner", "0", RUNTIME_DIR "/NmeCmdLine",
+                            "http://127.0.0.1:18765/live.h264",
+                            hw ? ((center || ana) ? "screencenter" : res720 ? "screen720" : "screen")
+                               : RUNTIME_DIR "/raw.fifo", 0};
+    char name[64];
+    long long limit;
+    unlink("http.ready");
+    snprintf(name, sizeof(name), "fifo-http-%u.%u.log", session, generation);
+    *http = spawn(http_args, 0, name);
+    if (!hw) {
+        snprintf(name, sizeof(name), "%s-%u.%u.log", wal ? "present" : "frames", session, generation);
+        *frames = spawn(wal ? wargv : frame_args, "raw.fifo", name);
+    }
+    snprintf(name, sizeof(name), "decoder-%u.%u.log", session, generation);
+    *decoder = spawn(decoder_args, 0, name);
+    limit = ms() + 10000;
+    while (!stopping && access("http.ready", F_OK) && alive(http) && alive(decoder) &&
+           (hw || alive(frames)) && (!capture || alive(capture)) && ms() < limit) {
+        keep_reported(session);
+        usleep(100000);
+    }
+    if (stopping || access("http.ready", F_OK) || !alive(http) || !alive(decoder) ||
+        (!hw && !alive(frames)) || (capture && !alive(capture)))
+        return 0;
+    if (hw && (!generation || access("/fs/ram3/nbt-aa-hidden", F_OK)))
+        *hwv = start_hwvideo(center, right, session, generation);
+    return 1;
+}
+
+static int video_recovery_failed(const char* token, unsigned generation, const char* stage, int error)
+{
+    printf("AA_VIDEO_RECOVERY session=%s generation=%u state=failed stage=%s errno=%d uptime_ms=%lld\n",
+           token, generation, stage, error, ms());
+    return 0;
+}
+
+static int recover_video_chain(Child* http, Child* decoder, Child* frames, Child* hwv, Child* capture,
+                               int hw, int wal, int center, int ana, int right, int res720, char** wargv,
+                               unsigned session, unsigned generation, const char* token, int guard)
+{
+    long long limit = ms() + 5000;
+    unsigned seen;
+    char state[32];
+    int fifo, opened = 0;
+    const char* bg_focus = getenv("NBT_AA_BG_FOCUS");
+    printf("AA_VIDEO_RECOVERY session=%s generation=%u state=requested uptime_ms=%lld\n", token, generation, ms());
+    if (!video_recovery_publish(NBT_VIDEO_CONTROL, token, generation, "pause"))
+        return video_recovery_failed(token, generation, "request_pause", errno);
+    while (!stopping && alive(capture) && ms() < limit) {
+        if (video_recovery_read(NBT_VIDEO_STATUS, token, &seen, state, sizeof(state)) &&
+            seen == generation && !strcmp(state, "paused"))
+            break;
+        keep_reported(session);
+        usleep(100000);
+    }
+    if (stopping || !alive(capture) || ms() >= limit)
+        return video_recovery_failed(token, generation, "await_pause", 0);
+    end(hwv);
+    end(http);
+    end(decoder);
+    end(frames);
+    if (center)
+        hmi_visible();
+    drain(guard);
+    fifo = open("annexb.fifo", O_RDONLY | O_NONBLOCK);
+    if (fifo < 0)
+        return video_recovery_failed(token, generation, "drain_fifo", errno);
+    drain(fifo);
+    close(fifo);
+    if (!alive(capture) || stopping ||
+        !start_video_chain(http, decoder, frames, hwv, capture, hw, wal, center, ana, right, res720, wargv,
+                           session, generation))
+        return video_recovery_failed(token, generation, "start_children", 0);
+    if (!video_recovery_publish(NBT_VIDEO_CONTROL, token, generation, "ready"))
+        return video_recovery_failed(token, generation, "publish_ready", errno);
+    limit = ms() + 10000;
+    while (!stopping && alive(capture) && alive(http) && alive(decoder) && (hw || alive(frames))) {
+        if (video_recovery_read(NBT_VIDEO_STATUS, token, &seen, state, sizeof(state)) && seen == generation) {
+            if (!strcmp(state, "running"))
+                return 1;
+            if (!strcmp(state, "failed") || !strcmp(state, "fault"))
+                break;
+            if (!strcmp(state, "opened") && !opened) {
+                opened = 1;
+                limit = ms() + 10000;
+            }
+        }
+        if (opened && bg_focus && !strcmp(bg_focus, "1") && !access("/fs/ram3/nbt-aa-hidden", F_OK))
+            limit = ms() + 10000;
+        else if (ms() >= limit)
+            break;
+        keep_reported(session);
+        usleep(100000);
+    }
+    return video_recovery_failed(token, generation, opened ? "await_idr" : "await_open", 0);
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------------ */
 
 int main(int argc, char** argv)
@@ -813,7 +917,8 @@ int main(int argc, char** argv)
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     set_audio_mode();
-    setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* USB IN may wait 8 s, followed by callback/abort grace and a bounded socket handoff. */
+    setenv("NBT_RX_TIMEOUT_S", "15", 1);
     /* now playing (song / artist / state) for nbt_cluster's track line in the cluster / HUD */
     setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);
     unlink("nowplaying");
@@ -931,6 +1036,8 @@ int main(int argc, char** argv)
     /* ---- one Android Auto session per loop pass ---- */
     while (!stopping && alive(&lease)) {
         char session_end[160] = "";
+        char video_token[64];
+        int video_started = 0;
         audio_route_cleanup();
         /* Optional HMI gate (file gate.mode in the runtime directory): the phone is only touched after the Android Auto
          * page in the HMI was opened, which creates /fs/ram3/nbt-aa-request (see src/idrive/aa_entry_plugin.cpp). */
@@ -1019,6 +1126,13 @@ int main(int argc, char** argv)
         report("connecting", session);
         ++attempts;
         ++session;
+        snprintf(video_token, sizeof(video_token), "%ld-%u", (long)getpid(), session);
+        unlink(NBT_VIDEO_CONTROL);
+        unlink(NBT_VIDEO_STATUS);
+        if (!live)
+            setenv("NBT_AA_VIDEO_SESSION", video_token, 1);
+        else
+            unsetenv("NBT_AA_VIDEO_SESSION");
         g_incident_session = session;
         report("starting_decoder", session);
         drain(guard);
@@ -1035,43 +1149,12 @@ int main(int argc, char** argv)
             setenv("NBT_AOA_PRODUCT", "2d01", 1);
         else
             unsetenv("NBT_AOA_PRODUCT");
-        if (!live) {
-            unlink("http.ready");
-            {
-                char* args[] = {"./fifo_http", "annexb.fifo", "http.ready", 0};
-                http = spawn(args, 0, 0);
-            }
-            if (hw) {
-                /* hardware mode: nothing between decoder and screen */
-            } else if (wal)
-                frames = spawn(wargv, "raw.fifo", "present.log");
-            else {
-                char* args[] = {"./native_frames", "--seconds", "0", "--fps", "3", 0};
-                frames = spawn(args, "raw.fifo", "frames.log");
-            }
-            {
-                char* args[] = {"./decode_runner", "0", RUNTIME_DIR "/NmeCmdLine", "http://127.0.0.1:18765/live.h264",
-                                hw ? ((center || ana) ? "screencenter" : res720 ? "screen720" : "screen")
-                                   : RUNTIME_DIR "/raw.fifo",
-                                0};
-                char decname[40];
-                snprintf(decname, sizeof(decname), "decoder-%u.log", session);
-                decoder = spawn(args, 0, decname);
-            }
-            /* wait up to 10 s until the player is connected to fifo_http */
-            {
-                long long limit = ms() + 10000;
-                while (!stopping && access("http.ready", F_OK) && alive(&http) && alive(&decoder) && ms() < limit)
-                    usleep(100000);
-            }
-            /* the decoder already crops to the content rows (-vr), so the window is the plain 800x480 output;
-             * viewport x,y,w,h on the 1280x480 display: centred (240,0) or left edge (0,0, iDrive stays visible) */
-            if (hw && !stopping)
-                hwv = start_hwvideo(center, right, session, 0);
-        }
+        if (!live)
+            video_started = start_video_chain(&http, &decoder, &frames, &hwv, NULL, hw, wal, center, ana, right,
+                                              res720, wargv, session, 0);
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
-        if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
+        if (!stopping && (live ? alive(&http) : video_started)) {
             char* args[] = {"./nbt_android_auto", "--capture-video", bus_text, device_text, 0};
             int previous_knob_mode = audio_knob_mode;
             set_audio_mode(); /* again per session: a failed audio route falls back to Bluetooth */
@@ -1099,6 +1182,9 @@ int main(int argc, char** argv)
             {
                 long long began = ms(), last_hwv = ms(), last_persist = ms();
                 unsigned hwv_restarts = 0;
+                unsigned video_generation = 0;
+                long long last_video_recovery = 0;
+                int recovery_failed = 0;
                 const Child* ended = NULL;
                 const char* phone = getenv("NBT_PHONE_ID");
                 char detail[112];
@@ -1114,6 +1200,29 @@ int main(int argc, char** argv)
                         ended = &decoder;
                     else if (!live && !hw && !alive(&frames))
                         ended = &frames;
+                    if (!live && alive(&capture)) {
+                        unsigned seen;
+                        char state[32];
+                        int writer_fault = video_recovery_read(NBT_VIDEO_STATUS, video_token, &seen, state,
+                                                               sizeof(state)) &&
+                                           seen == video_generation && !strcmp(state, "fault");
+                        if ((ended && ended != &capture) || writer_fault) {
+                            printf("AA_VIDEO_RECOVERY session=%s generation=%u cause=%s pid=%ld status=%d "
+                                   "uptime_ms=%lld\n", video_token, video_generation,
+                                   ended ? ended->name : "fifo_peer", ended ? (long)ended->started_pid : 0L,
+                                   ended ? ended->status : -1, ms());
+                            if ((last_video_recovery && ms() - last_video_recovery < 10000) ||
+                                !recover_video_chain(&http, &decoder, &frames, &hwv, &capture, hw, wal, center,
+                                                     ana, right, res720, wargv, session, ++video_generation,
+                                                     video_token, guard)) {
+                                recovery_failed = 1;
+                                break;
+                            }
+                            last_video_recovery = ms();
+                            ended = NULL;
+                            continue;
+                        }
+                    }
                     if (ended)
                         break;
                     usleep(200000);
@@ -1143,7 +1252,9 @@ int main(int argc, char** argv)
                         plog_line("session still running%s", 0, session);
                     }
                 }
-                if (ended) {
+                if (recovery_failed) {
+                    snprintf(detail, sizeof(detail), "video recovery failed generation=%u", video_generation);
+                } else if (ended) {
                     const char* outcome = "status unavailable";
                     int code = -1;
                     if (ended->status >= 0 && WIFEXITED(ended->status)) {
