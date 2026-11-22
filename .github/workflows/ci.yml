@@ -55,6 +55,7 @@ jobs:
             printf '\n===== %s =====\n' "$binary" >> elf-report.txt
             readelf -W -h -l -d -V --dyn-syms "$binary" >> elf-report.txt
           done
+          python3 ../../scripts/compare_qnx_abi.py --open . --output abi-inventory.json
       - name: Upload experimental open-build outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -63,6 +64,8 @@ jobs:
             build/open-ci/programs/
             build/open-ci/plugin-resources/
             build/open-ci/build.log
+            build/open-ci/abi-inputs.json
+            build/open-ci/abi-inventory.json
             build/open-ci/SHA256SUMS
             build/open-ci/elf-report.txt
           if-no-files-found: error

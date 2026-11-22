@@ -31,6 +31,7 @@ import uuid
 from pathlib import Path
 
 from aa_session_overlay import harden_session
+from abi_provenance import capture_inputs, write_inputs
 from mbedtls_legacy_time import patch_x509
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,6 +231,8 @@ def main():
     if args.compare:
         add_expected(archive, args.compare.resolve())
     archive.close()
+    inputs = capture_inputs(ROOT, out, toolchain="qnx-sdp", selected=PROGRAMS,
+                            nbt_aad=NBT_AAD_REVISION, mbedtls_sha256=MBEDTLS_SHA256)
 
     folder = ".nbt-build/" + run_id
     create_vm_build_directory(remote, folder)
@@ -261,6 +264,8 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
+    hmi_link = "real" if (programs / "libNbtAndroidAuto.so").is_file() else "missing"
+    write_inputs(out, inputs, reused=(), hmi_link=hmi_link)
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
     return 0

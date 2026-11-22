@@ -52,22 +52,22 @@ typedef struct usbd_connect_parm {
   uint8_t __reserved[14];
 } usbd_connect_parm_t;
 
-/* Standard USB descriptors (packed, as on the wire) */
-typedef struct usbd_descriptor_header { uint8_t bLength, bDescriptorType; } __attribute__((packed)) usbd_descriptor_header_t;
+/* Descriptor fields follow the wire format; the SDP types use natural alignment and may have tail padding. */
+typedef struct usbd_descriptor_header { uint8_t bLength, bDescriptorType; } usbd_descriptor_header_t;
 typedef struct usbd_device_descriptor {
   uint8_t bLength, bDescriptorType; uint16_t bcdUSB; uint8_t bDeviceClass, bDeviceSubClass, bDeviceProtocol, bMaxPacketSize0;
   uint16_t idVendor, idProduct, bcdDevice; uint8_t iManufacturer, iProduct, iSerialNumber, bNumConfigurations;
-} __attribute__((packed)) usbd_device_descriptor_t;
+} usbd_device_descriptor_t;
 typedef struct usbd_configuration_descriptor {
   uint8_t bLength, bDescriptorType; uint16_t wTotalLength; uint8_t bNumInterfaces, bConfigurationValue, iConfiguration, bmAttributes, MaxPower;
-} __attribute__((packed)) usbd_configuration_descriptor_t;
+} usbd_configuration_descriptor_t;
 typedef struct usbd_interface_descriptor {
   uint8_t bLength, bDescriptorType, bInterfaceNumber, bAlternateSetting, bNumEndpoints, bInterfaceClass,
           bInterfaceSubClass, bInterfaceProtocol, iInterface;
-} __attribute__((packed)) usbd_interface_descriptor_t;
+} usbd_interface_descriptor_t;
 typedef struct usbd_endpoint_descriptor {
   uint8_t bLength, bDescriptorType, bEndpointAddress, bmAttributes; uint16_t wMaxPacketSize; uint8_t bInterval;
-} __attribute__((packed)) usbd_endpoint_descriptor_t;
+} usbd_endpoint_descriptor_t;
 typedef union usbd_descriptors {
   usbd_descriptor_header_t generic;
   usbd_device_descriptor_t device;

@@ -21,6 +21,12 @@ A=$W/src/android_auto
 HMI_LIBS=${HMI_LIBS:-$HOME/.nbt-build/hmi-libs}
 CC="qcc -V4.4.2,gcc_ntox86"
 CXX="qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x"
+echo ABI_TOOLCHAIN_INFO_BEGIN
+echo "C: $CC"
+echo "C++: $CXX"
+qcc -V 2>&1 || echo "QCC_VERSION_LIST_UNAVAILABLE"
+ntox86-ld --version 2>&1 || echo "LD_VERSION_UNAVAILABLE"
+echo ABI_TOOLCHAIN_INFO_END
 TLSINC="-I$W/mbedtls-3.6.7/include"
 TLSLIBS="$W/mbedtls-3.6.7/library/libmbedtls.a $W/mbedtls-3.6.7/library/libmbedx509.a $W/mbedtls-3.6.7/library/libmbedcrypto.a"
 AAINC="$TLSINC -I$W/reference/src -I$W/reference/include"

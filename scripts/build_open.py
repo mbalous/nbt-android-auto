@@ -24,7 +24,9 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_all import NBT_AAD_REVISION, PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_repo_sources  # noqa: E402
+from abi_provenance import capture_inputs, write_inputs  # noqa: E402
+from build_all import (MBEDTLS_SHA256, NBT_AAD_REVISION, PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad,
+                       add_repo_sources)  # noqa: E402
 
 OPEN_PROGRAMS = ("nbt_android_auto", "native_service", "decode_runner", "fifo_http", "nbt_knob",
                  "nbt_hwvideo", "nbt_cluster", "audioconn", "nbt_reset", "libNbtAndroidAuto.so")
@@ -79,6 +81,8 @@ def main():
     with tarfile.open(archive_path) as tar:
         tar.extractall(work)
     shutil.copy(ROOT / "scripts/build-open.sh", work / "build-open.sh")
+    inputs = capture_inputs(ROOT, out, toolchain="open-experimental", selected=selected,
+                            nbt_aad=NBT_AAD_REVISION, mbedtls_sha256=MBEDTLS_SHA256)
 
     env = ["-e", "PROGRAMS=" + " ".join(selected)]
     rel = work.relative_to(ROOT).as_posix()
@@ -96,6 +100,7 @@ def main():
     programs = out / "programs"
     programs.mkdir()
     copy_built_programs(work / "out", programs, selected)
+    reused = []
     if args.reuse:
         for name, folder in PROGRAMS.items():
             source = args.reuse / folder / name
@@ -103,6 +108,7 @@ def main():
                 if source.stat().st_size == 0:
                     raise SystemExit("Cannot reuse empty program: " + str(source))
                 shutil.copy(source, programs / name)
+                reused.append(name)
                 print("reused from", args.reuse.name + ":", name)
     if args.programs is None and not (programs / "accessory_window").is_file():
         print("NOTE: accessory_window is missing; a complete installer payload requires a compatible existing binary.",
@@ -111,6 +117,9 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
+    hmi_link = ("stubs" if "libNbtAndroidAuto.so" in selected else
+                "reused" if "libNbtAndroidAuto.so" in reused else "missing")
+    write_inputs(out, inputs, reused=reused, hmi_link=hmi_link)
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
     return 0
