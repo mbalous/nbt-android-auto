@@ -147,7 +147,7 @@ void nbt::SpeechOut::cancelPending() {}
 void nbt::SpeechOut::setFeed(bool) {}
 void nbt::SpeechOut::flush() {}
 size_t nbt::SpeechOut::queuedBytes() const { return 0; }
-void nbt::SpeechOut::setFocusBusy(bool, uint64_t) {}
+void nbt::SpeechOut::setFocusState(bool, bool, uint64_t) {}
 void nbt::SpeechOut::openEndpoint() {}
 void nbt::SpeechOut::closeEndpoint() {}
 uint32_t nbt::SpeechOut::endpointWrites() const { return 0; }

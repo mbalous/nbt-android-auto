@@ -25,7 +25,7 @@ fi
 NBT="169.254.199.99"
 RELEASE="$REPO/.local/release-payload/NBT-AndroidAuto-Python-2026.11.10.2/payload"
 NBT_AAD="$REPO/.local/reference-nbt-aad"
-NBT_AAD_REV="4328560e33d622243b68e8e1bb0766180fd954e5"
+NBT_AAD_REV="cd1d9f87e330f90109068d8ccc3f7fd61f945d89"
 INSTALLER="$REPO/installer/nbt_aa_installer.py"
 PAYLOAD="$REPO/installer/payload"
 STAMP="$PAYLOAD/.built-by-open-toolchain"

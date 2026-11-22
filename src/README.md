@@ -48,7 +48,7 @@ notices kept in every file), adapted to this NBT.
 
 The protocol itself (version exchange, TLS, service discovery, channels) is **NBT-AAD's `AASession`**
 ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto), `milestone-7/src`, commit
-`4328560`). It is compiled from that upstream checkout with these changes:
+`cd1d9f8`). It is compiled from that upstream checkout with these changes:
 
 - `android_auto/aa_cryptor_mbedtls.cpp` replaces upstream `aa_cryptor.cpp` (Mbed TLS 3.6.7 instead of OpenSSL).
 - `scripts/aa_session_overlay.py` applies checked edits to upstream `aa_session.cpp` (stricter phase checks, TLS errors).

@@ -21,6 +21,8 @@ int g_dev_opens = 0;
 int g_fail_next_writes = 0;
 int16_t g_last_peak = 0;
 int16_t g_max_peak_seen = 0;
+int g_speech_frames = 0;
+int g_speech_states = 0;
 
 void resetDeviceStats() {
     pthread_mutex_lock(&g_dev_lock);
@@ -133,8 +135,8 @@ SpeechOut::SpeechOut(AudioRoute& route) : route_(route), focus_(*this) {}
 SpeechOut::~SpeechOut() {}
 void SpeechOut::init(const SpeechConfig&) {}
 bool SpeechOut::takesPrompt(uint64_t) const { return false; }
-void SpeechOut::frame(const uint8_t*, size_t) {}
-void SpeechOut::state(bool, uint32_t, uint32_t) {}
+void SpeechOut::frame(const uint8_t*, size_t) { ++g_speech_frames; }
+void SpeechOut::state(bool, uint32_t, uint32_t) { ++g_speech_states; }
 bool SpeechOut::active() const {
     if (g_active_probe_target) {
         // Must not deadlock: BrowserAudio::lock_ must NOT be held when SpeechOut::active() is called.
@@ -151,7 +153,7 @@ void SpeechOut::cancelPending() {}
 void SpeechOut::setFeed(bool) {}
 void SpeechOut::flush() {}
 size_t SpeechOut::queuedBytes() const { return 0; }
-void SpeechOut::setFocusBusy(bool, uint64_t) {}
+void SpeechOut::setFocusState(bool, bool, uint64_t) {}
 void SpeechOut::openEndpoint() {}
 void SpeechOut::closeEndpoint() {}
 uint32_t SpeechOut::endpointWrites() const { return 0; }
@@ -264,9 +266,49 @@ static void testDestructorDrainsShutdownRemove(const char* audioconn_script, con
     assert(access(remove_done_file, F_OK) == 0);
 }
 
+static void testGuidanceMixedWithMedia(const char* audioconn_script) {
+    resetDeviceStats();
+    g_speech_frames = g_speech_states = 0;
+    setenv("NBT_AUDIOCONN", audioconn_script, 1);
+    setenv("NBT_SPEECH_OWN_CHANNEL", "1", 1);
+
+    nbt::BrowserConfig cfg;
+    cfg.conn = 0xb8;
+    cfg.preroll_ms = 0;
+    cfg.wait_ms = 0;
+    cfg.resampler_linear = true;
+    cfg.drift = false;
+    cfg.speech.enabled = false;
+
+    nbt::BrowserAudio audio;
+    assert(audio.init(cfg));
+    audio.onStreamState(nbt::AA_CH_MEDIA_AUDIO, true, 48000, 2);
+    feedMedia(audio, 0, 8);
+    const long long media_deadline = nowMs() + 3000;
+    while (deviceWrites() < 2 && nowMs() < media_deadline) usleep(5000);
+    assert(deviceWrites() >= 2);
+    audio.waitForRoute();
+
+    audio.onStreamState(nbt::AA_CH_GUIDANCE_AUDIO, true, 48000, 1);
+    std::vector<int16_t> guidance(1024, 10000);
+    const long long guidance_deadline = nowMs() + 3000;
+    while (maxPeakSeen() < 4000 && nowMs() < guidance_deadline) {
+        feedMedia(audio, 0, 2);
+        audio.onFrame(nbt::AA_CH_GUIDANCE_AUDIO, reinterpret_cast<const uint8_t*>(&guidance[0]),
+                      guidance.size() * sizeof(int16_t), 0);
+        usleep(5000);
+    }
+    assert(maxPeakSeen() >= 4000);
+    audio.onStreamState(nbt::AA_CH_GUIDANCE_AUDIO, false, 0, 0);
+    assert(g_speech_frames == 0 && g_speech_states == 0);
+    audio.stop();
+    unsetenv("NBT_SPEECH_OWN_CHANNEL");
+}
+
 int main(int argc, char** argv) {
     assert(argc == 3);
     testInitialVolumeAndReopenAndNoNestedLock();
     testDestructorDrainsShutdownRemove(argv[1], argv[2]);
+    testGuidanceMixedWithMedia(argv[1]);
     return 0;
 }

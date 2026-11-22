@@ -602,8 +602,9 @@ parser audit above are the evidence for this particular phone and TLS build.
 
 ## Reference audit
 
-Pinned reference: Sq00ky/Supra-iDrive6-Android-Auto commit
-4328560e33d622243b68e8e1bb0766180fd954e5, under .local/reference-nbt-aad.
+This audit used Sq00ky/Supra-iDrive6-Android-Auto commit
+4328560e33d622243b68e8e1bb0766180fd954e5. The current build pin is documented in
+[DEVELOPMENT.md](DEVELOPMENT.md), with the checkout under .local/reference-nbt-aad.
 Its license is PolyForm Noncommercial 1.0.0; any reused source must retain the
 license and required notice, Copyright (c) 2026 nanaisu. Selected protocol
 sources/tests are built in ignored build directories. The adapted AACryptor
@@ -813,7 +814,7 @@ the reference daemon or direct-USB driver takeover on this car unchanged.
 
 ## Primary sources
 
-- https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/tree/4328560e33d622243b68e8e1bb0766180fd954e5
+- https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/tree/4328560e33d622243b68e8e1bb0766180fd954e5 (reference audited above)
 - https://source.android.com/docs/core/interaction/accessories/aoa
 - https://source.android.com/docs/core/interaction/accessories/aoa2
 - https://support.google.com/androidauto/answer/6348019?hl=de

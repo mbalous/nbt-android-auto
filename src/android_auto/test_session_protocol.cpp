@@ -7,6 +7,7 @@
 #include <sys/select.h>
 #include <signal.h>
 #include <errno.h>
+#include <pthread.h>
 #include <vector>
 
 typedef std::vector<uint8_t> Bytes;
@@ -21,6 +22,7 @@ static bool read_exact(int fd, uint8_t* p, size_t size) {
         require(ready > 0, "bounded peer read (not receiver idle timeout)");
         ssize_t n = read(fd, p, size);
         if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && errno == ECONNRESET) return false;
         if (n == 0) return false;
         require(n > 0, "peer socket read");
         p += n; size -= n;
@@ -138,6 +140,22 @@ static void on_audio(uint8_t channel, const uint8_t* pcm, size_t size, uint64_t 
             "PCM callback preserves channel/payload/timestamp");
     ++*(unsigned*)ctx;
 }
+struct PhoneCalls {
+    pthread_mutex_t mutex;
+    unsigned count;
+    unsigned active;
+    bool in_call;
+    PhoneCalls() : count(0), active(0), in_call(false) { pthread_mutex_init(&mutex, NULL); }
+    ~PhoneCalls() { pthread_mutex_destroy(&mutex); }
+};
+static void on_phone(bool in_call, void* ctx) {
+    PhoneCalls* calls = static_cast<PhoneCalls*>(ctx);
+    pthread_mutex_lock(&calls->mutex);
+    ++calls->count;
+    if (in_call) ++calls->active;
+    calls->in_call = in_call;
+    pthread_mutex_unlock(&calls->mutex);
+}
 static void configure_identity() {
     setenv("NBT_AA_TLS_CERT", "lab-client.pem", 1);
     setenv("NBT_AA_TLS_KEY", "lab-client-key.pem", 1);
@@ -152,7 +170,9 @@ int main() {
     setenv("NBT_RX_TIMEOUT_S", "10", 1);
     nbt::AASession session;
     unsigned audio_calls = 0;
+    PhoneCalls phone_calls;
     session.setAudioFrameCallback(on_audio, &audio_calls);
+    session.setPhoneCallCallback(on_phone, &phone_calls);
     for (unsigned scenario = 0; scenario < 8; ++scenario) {
         int fd = begin(session);
         switch (scenario) {
@@ -201,10 +221,19 @@ int main() {
             pcm.push_back(0x12); pcm.push_back(0x34); pcm.push_back(0x56); pcm.push_back(0x78);
             send_encrypted(fd, server, carrier, 9, pcm);
             require(message(receive_encrypted(fd, server, 9)) == 0x8004, "media acknowledgment");
+            Bytes phone = msg(0x8001);
+            phone.push_back(0x0a); phone.push_back(2); phone.push_back(8); phone.push_back(4);
+            send_encrypted(fd, server, carrier, 11, phone);
+            phone.back() = 3;
+            send_encrypted(fd, server, carrier, 11, phone);
             Bytes ping = msg(11); ping.push_back(8); ping.push_back(123);
             send_frame(fd, 0, 3, ping);
             Frame pong = receive_frame(fd); ping[1] = 12;
             require(pong.channel == 0 && pong.flags == 3 && pong.data == ping, "ping timestamp echo");
+            pthread_mutex_lock(&phone_calls.mutex);
+            require(phone_calls.count == 2 && phone_calls.active == 1 && !phone_calls.in_call,
+                    "phone status dispatched without AV response");
+            pthread_mutex_unlock(&phone_calls.mutex);
             send_encrypted(fd, server, carrier, 0, msg(15));
             require(message(receive_encrypted(fd, server, 0)) == 16, "clean ByeBye response");
         } else if (scenario == 1) {
@@ -218,6 +247,6 @@ int main() {
         release(server); free(carrier);
     }
     require(audio_calls == 1, "only authenticated PCM delivered");
-    puts("AA_PROTOCOL_SIMULATOR_OK handshakes=4 discovery=4 PCM=1 ping bye tamper repeated-auth plaintext-rejection reconnect");
+    puts("AA_PROTOCOL_SIMULATOR_OK handshakes=4 discovery=4 PCM=1 phone-status ping bye tamper repeated-auth plaintext-rejection reconnect");
     return 0;
 }
