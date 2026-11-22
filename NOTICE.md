@@ -18,7 +18,7 @@ Parts of this project are taken from or based on NBT-AAD by nanaisu,
 - the Android Auto protocol core (`aa_session`, `sdr_builder`, `audio_acks`, `crash_handler`, and the browser audio
   mode `audio/browser_audio` with its helpers `asound_device`, `audio_route`, `mixer`, `resampler`, `drift`,
   `config`, `stream_rate`, `pcm_ring`, `playout`), which is built from the
-  upstream repository at commit `4328560` plus `scripts/aa_session_overlay.py` and [patches/](patches/) (both are
+  upstream repository at commit `cd1d9f8` plus `scripts/aa_session_overlay.py` and [patches/](patches/) (both are
   modifications of NBT-AAD under the same license) and is contained in the `nbt_android_auto` binary
 - the head-unit TLS identity `cert.pem` / `key.pem` / `ca.pem` shipped in the installer payload (the well-known
   Android Auto head-unit test identity, as embedded in upstream `aa_cryptor.cpp`; it is public and not a secret)

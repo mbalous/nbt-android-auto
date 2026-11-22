@@ -13,7 +13,7 @@ What it does:
 Requirements: Python 3.8+, git, OpenSSH (ssh/scp) to the VM, the VM user must not be root.
 Example:
   git clone https://github.com/Sq00ky/Supra-iDrive6-Android-Auto .local/reference-nbt-aad
-  git -C .local/reference-nbt-aad checkout 4328560e33d622243b68e8e1bb0766180fd954e5
+  git -C .local/reference-nbt-aad checkout cd1d9f87e330f90109068d8ccc3f7fd61f945d89
   python scripts/build_all.py --host qnx-build --hmi-libs /home/nbtbuild/hmi-libs --compare installer/payload
 """
 import argparse
@@ -34,7 +34,7 @@ from aa_session_overlay import harden_session
 from mbedtls_legacy_time import patch_x509
 
 ROOT = Path(__file__).resolve().parents[1]
-NBT_AAD_REVISION = "4328560e33d622243b68e8e1bb0766180fd954e5"
+NBT_AAD_REVISION = "cd1d9f87e330f90109068d8ccc3f7fd61f945d89"
 MBEDTLS_VERSION = "3.6.7"
 MBEDTLS_SHA256 = "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6"
 MBEDTLS_URL = ("https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-%s/mbedtls-%s.tar.bz2"
