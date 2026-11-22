@@ -35,6 +35,19 @@ static void* complete_thread(void* context)
     return 0;
 }
 
+static int delayed_stop_check(void* context)
+{
+    int* calls = static_cast<int*>(context);
+    if (++*calls == 1) {
+        timespec delay = {0, 300000000};
+        while (nanosleep(&delay, &delay) == -1)
+            require(errno == EINTR, "delay cancellation check");
+    }
+    return 0;
+}
+
+static int already_stopped(void*) { return 1; }
+
 struct Wakeup {
     usb_wait* wait;
     bool stopped;
@@ -67,6 +80,25 @@ int main()
     require(usb_wait_await(&wait, 20) == 0, "empty wait times out");
     long long waited = elapsed_ms(started);
     require(waited >= 15 && waited < 500, "timeout uses one bounded deadline");
+    usb_wait_destroy(&wait);
+
+    wait = {};
+    int checks = 0;
+    require(usb_wait_init(&wait) == 0, "initialize sliced deadline");
+    require(usb_wait_await_cancellable(&wait, 250, delayed_stop_check, &checks) == 0,
+            "delayed cancellation checks still expire the overall deadline");
+    require(checks >= 1 && checks <= 2, "expired overall deadline does not add more wait slices");
+    require(usb_wait_await_cancellable(&wait, 500, already_stopped, 0) == -ECANCELED,
+            "cancellation is observed during sliced waits");
+    usb_wait_destroy(&wait);
+
+    wait = {};
+    timespec deadline;
+    require(usb_wait_init(&wait) == 0, "initialize absolute wait");
+    require(usb_wait_deadline(&deadline, 0) == 0, "create expired deadline");
+    require(usb_wait_await_until(&wait, &deadline) == 0, "expired deadline times out");
+    usb_wait_signal(&wait);
+    require(usb_wait_await_until(&wait, &deadline) == 1, "completed callback wins over expired deadline");
     usb_wait_destroy(&wait);
 
     wait = {};

@@ -16,6 +16,7 @@ import time
 import uuid
 from aa_session_overlay import harden_session
 from build_all import NBT_AAD_REVISION
+from aa_usb_bundle import add_usb_headers
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = NBT_AAD_REVISION
@@ -149,6 +150,7 @@ static int endedAdd(int value) {
                  'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp',
                  'aa_media_out.hpp', 'aa_media_out.cpp', 'test_video_capture.cpp']:
         files[name] = (ROOT / 'src/android_auto' / name).read_bytes()
+    add_usb_headers(files, ".")
     cxx = "qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-3.6.7/include -Ireference/src -Ireference/include"
     libs = "lib/libmbedtls.a lib/libmbedx509.a lib/libmbedcrypto.a -lsocket -lm"
     commands = ["set -e", "export QNX_HOST=/usr/qnx650/host/qnx6/x86",

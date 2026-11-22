@@ -17,6 +17,7 @@ import time
 import uuid
 
 from build_all import NBT_AAD_REVISION
+from aa_usb_bundle import add_usb_headers
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = NBT_AAD_REVISION
@@ -96,6 +97,7 @@ def main():
                    "accessory_window.c": "", "nbt_android_auto.c": "-lusbdi"}
     for source in diagnostics:
         files["diagnostics/" + source] = (ROOT / "src/android_auto" / source).read_bytes()
+    add_usb_headers(files, "diagnostics")
 
     commands = ["set -u", "export QNX_HOST=/usr/qnx650/host/qnx6/x86",
                 "export QNX_TARGET=/usr/qnx650/target/qnx6",

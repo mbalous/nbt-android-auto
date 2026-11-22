@@ -29,12 +29,46 @@ enum usb_transfer_phase {
 
 struct usb_transfer_diag {
     unsigned long long attempts, bytes_requested, bytes_actual;
-    unsigned failures, zlp_attempts, zlp_failures;
+    unsigned failures, interruptions, abort_failures, zlp_attempts, zlp_failures;
     unsigned max_request, max_actual, max_elapsed_ms;
     unsigned first_failure;
     int first_io_rc, first_completion_rc;
     unsigned first_status, first_request, first_actual, first_elapsed_ms;
 };
+
+struct usb_transfer_observation {
+    long long started_ms;
+    int in_flight, callback_seen, interrupted;
+};
+
+static inline void usb_observation_begin(struct usb_transfer_observation* observation, long long started_ms)
+{
+    observation->started_ms = started_ms;
+    observation->in_flight = 1;
+    observation->callback_seen = 0;
+    observation->interrupted = 0;
+}
+
+static inline void usb_observation_callback(struct usb_transfer_observation* observation)
+{
+    observation->callback_seen = 1;
+}
+
+static inline void usb_observation_cancel(struct usb_transfer_observation* observation)
+{
+    if (observation->in_flight && !observation->callback_seen)
+        observation->interrupted = 1;
+}
+
+static inline int usb_observation_interrupted(const struct usb_transfer_observation* observation,
+                                             int clean_shutdown, int rc, int stopped, int cancelled)
+{
+    if (!clean_shutdown)
+        return 0;
+    if (rc == stopped)
+        return 1;
+    return observation->interrupted && (rc == 0 || rc == cancelled);
+}
 
 static inline unsigned usb_diag_saturate_add(unsigned value)
 {

@@ -635,6 +635,15 @@ static int log_has(const char* path, const char* token)
     return hit;
 }
 
+static int switch_log_action(const char* path)
+{
+    const int protocol_ok = log_has(path, "AOA_PROTOCOL_OK");
+    const int unsupported = log_has(path, "AOA_PROTOCOL_UNSUPPORTED") ||
+        log_has(path, "AOA_REQUEST id=51 index=0 result=0 status=02000004 ") ||
+        log_has(path, "AOA_REQUEST id=51 index=0 result=0 status=01000000 ");
+    return aoa_switch_action(protocol_ok, unsupported);
+}
+
 /* USB reset of the phone; log of the last one in reset.log. */
 static void reset_phone(int bus, int device, int type, int n)
 {
@@ -1088,22 +1097,19 @@ int main(int argc, char** argv)
                 break;
             /* Only ignore devices that actually refused GET_PROTOCOL (unsupported version, STALL, or short reply).
              * Transient attach/connect/USB errors before a definitive answer should retry instead of blacklisting. */
-            if (!log_has("switch.log", "AOA_PROTOCOL_OK")) {
-                if (log_has("switch.log", "AOA_PROTOCOL_UNSUPPORTED") ||
-                    log_has("switch.log", "AOA_REQUEST id=51 index=0 result=0 status=02000004 ") ||
-                    log_has("switch.log", "AOA_REQUEST id=51 index=0 result=0 status=01000000 ")) {
+            {
+                const int action = switch_log_action("switch.log");
+                if (action == AOA_SWITCH_UNSUPPORTED) {
                     ignore_dev(bus, device, found_v, found_p);
                     report("unsupported_device", session);
-                } else {
-                    ++attempts;
+                    sleep(1);
+                    continue;
                 }
-                sleep(1);
-                continue;
-            }
-            if (!log_has("switch.log", "AOA_START_SENT") &&
-                !log_has("switch.log", "AOA_START_OUTCOME_UNKNOWN")) {
-                ++attempts;
-                continue;
+                if (action == AOA_SWITCH_RETRY) {
+                    ++attempts;
+                    sleep(1);
+                    continue;
+                }
             }
             {
                 const int reenumerated = wait_for_accessory(&bus, &device, session);

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "../usb_transport_diag.h"
 
 static void require(int condition, const char* message)
@@ -13,6 +14,23 @@ static void require(int condition, const char* message)
 
 int main()
 {
+    usb_transfer_observation observation = {};
+    usb_observation_begin(&observation, 10);
+    usb_observation_callback(&observation);
+    usb_observation_cancel(&observation);
+    require(!usb_observation_interrupted(&observation, 1, 0, -1, ECANCELED),
+            "failure observed before shutdown is not hidden");
+    usb_observation_begin(&observation, 20);
+    usb_observation_cancel(&observation);
+    usb_observation_callback(&observation);
+    require(usb_observation_interrupted(&observation, 1, 0, -1, ECANCELED),
+            "callback racing local cancellation is marked uncertain");
+    require(!usb_observation_interrupted(&observation, 1, ETIMEDOUT, -1, ECANCELED),
+            "a timeout remains a failure after shutdown");
+    require(!usb_observation_interrupted(&observation, 0, ECANCELED, -1, ECANCELED),
+            "removal cancellation is not treated as clean shutdown");
+    require(usb_observation_interrupted(&observation, 1, -1, -1, ECANCELED),
+            "submission rejected during shutdown is an interruption");
     usb_transfer_diag diag = {};
     require(!strcmp(usb_diag_status_class(0, 0x02000005U), "device_noanswer"), "decode no answer");
     require(!strcmp(usb_diag_status_class(ENODEV, 0x02000005U), "status_query_enodev"), "preserve status-query error");

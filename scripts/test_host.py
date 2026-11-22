@@ -46,6 +46,7 @@ def main():
              ["-pthread", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
               "-DEOK=0", "-idirafter", str(ROOT / "toolchain/sysroot/usr/include")]),
             ("src/android_auto/tests/test_aoa_reenumeration.cpp", [], []),
+            ("src/android_auto/tests/test_native_switch.c", [], []),
             ("src/android_auto/tests/test_usb_transport_diag.cpp", [], []),
             ("src/android_auto/test_h264_annexb.cpp", [str(h264), str(work / "normalized.h264")], []),
             ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
@@ -62,8 +63,8 @@ def main():
         for source, arguments, extra_flags in tests:
             executable = work / Path(source).stem
             compiler = os.environ.get("CC", "cc") if source.endswith(".c") else os.environ.get("CXX", "g++")
-            source_flags = ["-std=gnu99" if flag == "-std=gnu++0x" else flag for flag in flags] \
-                if source.endswith(".c") else flags
+            source_flags = (["-std=gnu99" if flag == "-std=gnu++0x" else flag for flag in flags]
+                            if source.endswith(".c") else flags)
             subprocess.run([compiler, *source_flags, *extra_flags, str(ROOT / source),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable), *arguments], check=True)

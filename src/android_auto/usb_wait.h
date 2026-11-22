@@ -57,14 +57,18 @@ static void usb_wait_signal(struct usb_wait* w)
     }
 }
 
-static inline int usb_wait_is_done(struct usb_wait* w)
+static int usb_wait_deadline(struct timespec* deadline, unsigned milliseconds)
 {
-    int done, rc = pthread_mutex_lock(&w->mutex);
+    int rc = clock_gettime(CLOCK_MONOTONIC, deadline);
     if (rc)
-        return -rc;
-    done = w->done;
-    pthread_mutex_unlock(&w->mutex);
-    return done;
+        return -(errno ? errno : EIO);
+    deadline->tv_sec += (time_t)(milliseconds / 1000);
+    deadline->tv_nsec += (long)(milliseconds % 1000) * 1000000L;
+    if (deadline->tv_nsec >= 1000000000L) {
+        ++deadline->tv_sec;
+        deadline->tv_nsec -= 1000000000L;
+    }
+    return 0;
 }
 
 static int usb_wait_await_until(struct usb_wait* w, const struct timespec* deadline)
@@ -85,15 +89,35 @@ static int usb_wait_await_until(struct usb_wait* w, const struct timespec* deadl
 static int usb_wait_await(struct usb_wait* w, unsigned milliseconds)
 {
     struct timespec deadline;
-    if (clock_gettime(CLOCK_MONOTONIC, &deadline))
-        return -(errno ? errno : EIO);
-    deadline.tv_sec += (time_t)(milliseconds / 1000);
-    deadline.tv_nsec += (long)(milliseconds % 1000) * 1000000L;
-    if (deadline.tv_nsec >= 1000000000L) {
-        ++deadline.tv_sec;
-        deadline.tv_nsec -= 1000000000L;
+    int rc = usb_wait_deadline(&deadline, milliseconds);
+    return rc ? rc : usb_wait_await_until(w, &deadline);
+}
+
+static int usb_wait_await_cancellable(struct usb_wait* w, unsigned milliseconds,
+                                      int (*stopping)(void*), void* context)
+{
+    struct timespec deadline;
+    int rc = usb_wait_deadline(&deadline, milliseconds);
+    if (rc)
+        return rc;
+    for (;;) {
+        struct timespec slice;
+        int expired, result;
+        rc = usb_wait_deadline(&slice, 100);
+        if (rc)
+            return rc;
+        expired = slice.tv_sec > deadline.tv_sec ||
+                  (slice.tv_sec == deadline.tv_sec && slice.tv_nsec >= deadline.tv_nsec);
+        if (expired)
+            slice = deadline;
+        result = usb_wait_await_until(w, &slice);
+        if (result != 0)
+            return result;
+        if (stopping(context))
+            return -ECANCELED;
+        if (expired)
+            return 0;
     }
-    return usb_wait_await_until(w, &deadline);
 }
 
 #endif

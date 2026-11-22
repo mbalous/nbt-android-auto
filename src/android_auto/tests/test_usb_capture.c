@@ -132,6 +132,7 @@ int main(void)
     c.out_max_packet = 512;
     memset(out, 0, sizeof(out));
     require_test(!usb_transfer_lifecycle_init(&c.lifecycle), "initialize lifecycle");
+    require_test(!pthread_mutex_init(&c.diagnostics_mutex, NULL), "initialize diagnostics");
     reset_fake();
     fake_status = 0x02000005U;
     fake_actual = 5632;
@@ -139,7 +140,8 @@ int main(void)
     args.capture = &c;
     args.size = sizeof(args.data);
     read_transfer(&args);
-    require_test(!args.result && fake_io_calls == 1 && c.diagnostics[1].first_actual == 5632,
+    require_test(!args.result && fake_io_calls == 1 && c.diagnostics[1].failures == 1 &&
+                 c.diagnostics[1].first_actual == 5632,
                  "partial no-answer fails without replay");
 
     reset_fake();
@@ -172,9 +174,10 @@ int main(void)
     while (!fake_submitted)
         pthread_cond_wait(&fake_condition, &fake_mutex);
     pthread_mutex_unlock(&fake_mutex);
-    capture_cancel(&c);
-    require_test(pthread_join(thread, NULL) == 0 && !args.result && c.diagnostics[1].failures == 1 &&
-                 c.diagnostics[1].first_actual == 1024, "preserve a real failure racing shutdown");
+    capture_cancel(&c, 1);
+    require_test(pthread_join(thread, NULL) == 0 && !args.result && c.diagnostics[1].failures == 0 &&
+                 c.diagnostics[1].interruptions == 1 && c.diagnostics[1].bytes_actual == 1024,
+                 "failure racing clean shutdown is outcome-unknown and retains byte count");
     usb_transfer_lifecycle_destroy(&c.lifecycle);
     require_test(!usb_transfer_lifecycle_init(&c.lifecycle), "reinitialize lifecycle");
 
@@ -187,11 +190,28 @@ int main(void)
     while (!fake_submitted)
         pthread_cond_wait(&fake_condition, &fake_mutex);
     pthread_mutex_unlock(&fake_mutex);
-    capture_cancel(&c);
+    capture_cancel(&c, 1);
     require_test(pthread_join(thread, NULL) == 0, "join cancelled read");
-    require_test(!args.result && fake_aborts == 1 && c.diagnostics[1].failures == 0,
+    require_test(!args.result && fake_aborts == 1 && c.diagnostics[1].failures == 0 &&
+                 c.diagnostics[1].interruptions == 1,
                  "shutdown abort is not counted as a transport failure or repeated");
     usb_transfer_lifecycle_destroy(&c.lifecycle);
+
+    memset(&c.diagnostics[1], 0, sizeof(c.diagnostics[1]));
+    require_test(!usb_transfer_lifecycle_init(&c.lifecycle), "reinitialize lifecycle for removal");
+    reset_fake();
+    fake_pending = 1;
+    args.size = sizeof(args.data);
+    require_test(pthread_create(&thread, NULL, read_transfer, &args) == 0, "start read before removal");
+    pthread_mutex_lock(&fake_mutex);
+    while (!fake_submitted)
+        pthread_cond_wait(&fake_condition, &fake_mutex);
+    pthread_mutex_unlock(&fake_mutex);
+    capture_cancel(&c, 0);
+    require_test(pthread_join(thread, NULL) == 0 && !args.result && c.diagnostics[1].failures == 1 &&
+                 c.diagnostics[1].interruptions == 0, "removal cancellation remains a failure");
+    usb_transfer_lifecycle_destroy(&c.lifecycle);
+    pthread_mutex_destroy(&c.diagnostics_mutex);
 
     child = fork();
     require_test(child >= 0, "fork callback-loss test");
@@ -201,7 +221,7 @@ int main(void)
         reset_fake();
         fake_pending = 1;
         fake_abort_no_callback = 1;
-        bulk_transfer_t(&urb, &pipe, dma, sizeof(dma), 1, &transfer_status, &actual, &completion_rc, 1, 0, 0);
+        bulk_transfer_t(&urb, &pipe, dma, sizeof(dma), 1, &transfer_status, &actual, &completion_rc, 1, 0, 0, 0, 0);
         _exit(1);
     }
     require_test(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 6,

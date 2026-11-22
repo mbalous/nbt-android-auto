@@ -12,6 +12,11 @@ static void require(int condition, const char* message)
 
 int main()
 {
+    require(aoa_switch_action(1, 0) == AOA_SWITCH_WAIT,
+            "confirmed protocol waits even without a START outcome");
+    require(aoa_switch_action(0, 1) == AOA_SWITCH_UNSUPPORTED, "unsupported protocol remains ignored");
+    require(aoa_switch_action(0, 0) == AOA_SWITCH_RETRY, "transient pre-protocol failure retries");
+    require(aoa_switch_action(1, 1) == AOA_SWITCH_WAIT, "confirmed protocol takes precedence");
     const int normal = 1;
     const int accessory = 2;
     const long long deadline = 5000;
