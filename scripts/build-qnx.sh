@@ -21,6 +21,7 @@ OUT=$W/out
 A=$W/src/android_auto
 HMI_LIBS=${HMI_LIBS:-$HOME/.nbt-build/hmi-libs}
 HMI_MODE=${HMI_MODE:-real}
+HMI_REQUIRE_REAL=${HMI_REQUIRE_REAL:-0}
 CC="qcc -V4.4.2,gcc_ntox86"
 CXX="qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x"
 echo ABI_TOOLCHAIN_INFO_BEGIN
@@ -98,7 +99,9 @@ if test -f "$HMI_LIBS/libAppFramework.A.so" -a -f "$HMI_LIBS/libCoreFramework.A.
     aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L"$HMI_LIBS" -lAppFramework.A -lCoreFramework.A $HMI_LINK_EXTRA
   echo "QNX_HMI_LINK=$HMI_MODE"
 else
-  if test "$HMI_MODE" = stubs; then echo "Missing generated HMI stubs" >&2; exit 1; fi
+  if test "$HMI_MODE" = stubs || test "$HMI_REQUIRE_REAL" = 1; then
+    echo "Missing required HMI libraries in $HMI_LIBS" >&2; exit 1
+  fi
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
   echo "QNX_HMI_LINK=missing"
 fi

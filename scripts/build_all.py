@@ -293,8 +293,9 @@ def main():
     print("building in the VM:", folder, flush=True)
     mode = "stubs" if args.hmi_stubs else "real"
     hmi_libs = hmi_libs_assignment(args.hmi_libs or "$HOME/.nbt-build/hmi-libs") if mode == "real" else ""
-    result = remote("cd %s && tar xf source.tar && HMI_MODE=%s%s sh build-qnx.sh" %
-                    (folder, mode, hmi_libs), timeout=1800)
+    require_real = " HMI_REQUIRE_REAL=1" if args.hmi_libs is not None else ""
+    result = remote("cd %s && tar xf source.tar && HMI_MODE=%s%s%s sh build-qnx.sh" %
+                    (folder, mode, hmi_libs, require_real), timeout=1800)
     log = result.stdout.decode(errors="replace")
     (out / "build.log").write_text(log, encoding="utf-8")
     print(log[log.find("== nbt_android_auto"):] if "== nbt_android_auto" in log else log[-3000:])

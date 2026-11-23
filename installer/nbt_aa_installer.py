@@ -80,7 +80,7 @@ def validate_provenance(provenance, plugin_data):
             type(provenance['schema']) is not int or provenance['schema'] != 1:
         raise InstallError('Invalid or unsupported build provenance')
     modes = {'qnx-sdp': ('real', 'stubs', 'missing'),
-             'open-experimental': ('stubs', 'reused', 'missing')}
+             'open-experimental': ('real', 'stubs', 'reused', 'missing')}
     toolchain, mode = provenance['toolchain'], provenance['hmi_link']
     if not isinstance(toolchain, str) or not isinstance(mode, str) or \
             toolchain not in modes or mode not in modes[toolchain] or \

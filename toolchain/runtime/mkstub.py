@@ -35,7 +35,8 @@ SOCKET = names("sys/socket.h", "arpa/inet.h", "netdb.h")
 USBDI = names("sys/usbdi.h")
 LIBC_HEADERS = ["stdio.h", "stdlib.h", "string.h", "strings.h", "time.h", "sys/time.h", "sys/select.h", "unistd.h",
                 "fcntl.h", "sys/stat.h", "signal.h", "sched.h", "pthread.h", "sys/wait.h", "dlfcn.h", "dirent.h",
-                "ctype.h", "sys/resource.h", "locale.h", "wchar.h", "wctype.h", "setjmp.h", "sys/mman.h", "errno.h"]
+                "ctype.h", "sys/resource.h", "locale.h", "wchar.h", "wctype.h", "setjmp.h", "sys/mman.h", "errno.h",
+                "sys/dispatch.h", "sys/iofunc.h"]
 STATIC_ONLY = {"popen", "pclose", "alloca"}          # in libc.a only on QNX 6.5: provided by libqnxopen.a
 LIBC = names(*LIBC_HEADERS) - STATIC_ONLY - {"signal"}
 LIBC |= {"signal", "_init_libc", "_preinit_array", "_init_array", "_fini_array", "__get_errno_ptr", "stat64",

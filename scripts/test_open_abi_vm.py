@@ -12,12 +12,14 @@ from abi_provenance import digest_file
 from build_all import ROOT
 
 PROBE = ROOT / "toolchain/probes/abi_probe.cpp"
+RESOURCE_PROBE = ROOT / "toolchain/probes/resource_abi_probe.c"
 RUN = """\
 set -eu
 export QNX_HOST=/usr/qnx650/host/qnx6/x86 QNX_TARGET=/usr/qnx650/target/qnx6
 export PATH="$QNX_HOST/usr/bin:$PATH"
 qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x abi_probe.cpp -o probe_sdp
-chmod 700 probe_open probe_sdp
+qcc -V4.4.2,gcc_ntox86 -Wall resource_abi_probe.c -o resource_sdp
+chmod 700 probe_open probe_sdp resource_open resource_sdp
 test ! -e abi-probe-file-that-must-not-exist
 ./probe_sdp > sdp.txt
 ./probe_open > open.txt
@@ -27,6 +29,11 @@ cat open.txt
 echo ABI_OPEN_DONE
 cmp sdp.txt open.txt
 echo ABI_PROBES_MATCH
+./resource_sdp > resource_sdp.txt
+./resource_open > resource_open.txt
+cat resource_sdp.txt
+cmp resource_sdp.txt resource_open.txt
+echo RESOURCE_ABI_PROBES_MATCH
 """
 
 
@@ -84,15 +91,22 @@ def main():
     print("Evidence:", out, flush=True)
     source = out / "abi_probe.cpp"
     source.write_bytes(PROBE.read_bytes())
+    resource = out / "resource_abi_probe.c"
+    resource.write_bytes(RESOURCE_PROBE.read_bytes())
     run(["sh", str(ROOT / "toolchain/qnx-open"), "i486-pc-nto-qnx6.5.0-g++",
          "-O1", "-Wall", "-D_QNX_SOURCE", "-DNBT_OPEN_TOOLCHAIN", "-std=gnu++0x",
          "/repo/build/" + run_id + "/abi_probe.cpp", "-lqnxopen", "-o",
          "/repo/build/" + run_id + "/probe_open"], timeout=180, log=out / "cross-build.log")
+    run(["sh", str(ROOT / "toolchain/qnx-open"), "i486-pc-nto-qnx6.5.0-gcc", "-Wall",
+         "/repo/build/" + run_id + "/resource_abi_probe.c", "-o",
+         "/repo/build/" + run_id + "/resource_open"], timeout=180, log=out / "resource-cross-build.log")
     (out / "source-sha256.txt").write_text(digest_file(source) + "  abi_probe.cpp\n", encoding="ascii")
     archive_path = out / "source.tar"
     with tarfile.open(archive_path, "w", format=tarfile.USTAR_FORMAT) as archive:
         add_file(archive, "abi_probe.cpp", source.read_bytes(), 0o600)
         add_file(archive, "probe_open", (out / "probe_open").read_bytes(), 0o700)
+        add_file(archive, "resource_abi_probe.c", resource.read_bytes(), 0o600)
+        add_file(archive, "resource_open", (out / "resource_open").read_bytes(), 0o700)
         add_file(archive, "run.sh", RUN.encode(), 0o600)
     remote = ".nbt-build/" + run_id
     run(["ssh", *options, "qnx-build", "umask 077; mkdir -p .nbt-build && mkdir " + remote], timeout=30)
@@ -100,15 +114,18 @@ def main():
         run(["scp", "-O", *options, str(archive_path), "qnx-build:" + remote + "/source.tar"])
         output = run(["ssh", *options, "qnx-build", "cd " + remote + " && tar xf source.tar && sh run.sh"],
                      timeout=180, log=out / "vm-tests.log")
-        if not all(marker in output for marker in ("ABI_SDP_DONE", "ABI_OPEN_DONE", "ABI_PROBES_MATCH")):
+        if not all(marker in output for marker in ("ABI_SDP_DONE", "ABI_OPEN_DONE", "ABI_PROBES_MATCH",
+                                                    "RESOURCE_ABI_PROBES_MATCH")):
             raise RuntimeError("VM output missing probe completion markers")
-        for name in ("probe_sdp", "sdp.txt", "open.txt"):
+        for name in ("probe_sdp", "sdp.txt", "open.txt", "resource_sdp", "resource_sdp.txt", "resource_open.txt"):
             run(["scp", "-O", *options, "qnx-build:" + remote + "/" + name, str(out / name)])
         (out / "SHA256SUMS").write_text(
             "".join(digest_file(out / name) + "  " + name + "\n"
-                    for name in ("abi_probe.cpp", "probe_open", "probe_sdp")), encoding="ascii")
+                    for name in ("abi_probe.cpp", "probe_open", "probe_sdp",
+                                 "resource_abi_probe.c", "resource_open", "resource_sdp")), encoding="ascii")
         run(["ssh", *options, "qnx-build",
              "cd " + remote + " && rm source.tar abi_probe.cpp probe_open probe_sdp run.sh sdp.txt open.txt"
+             " resource_abi_probe.c resource_open resource_sdp resource_sdp.txt resource_open.txt"
              " && cd .. && rmdir " + run_id], timeout=30)
     except (RuntimeError, subprocess.TimeoutExpired):
         print("VM files retained at", remote, flush=True)

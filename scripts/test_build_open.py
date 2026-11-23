@@ -13,6 +13,8 @@ class OpenBuildTests(unittest.TestCase):
     def test_selects_requested_programs_without_duplicates(self):
         self.assertEqual(build_open.select_programs("native_service nbt_reset native_service"),
                          ("native_service", "nbt_reset"))
+        self.assertIn("accessory_window", build_open.select_programs(None))
+        self.assertIn("nbt_key", build_open.select_programs(None))
 
     def test_rejects_empty_or_unknown_program_selection(self):
         for value in ("  ", "native_service typo"):
@@ -46,10 +48,35 @@ class OpenBuildTests(unittest.TestCase):
     def test_records_built_reused_and_missing_plugin_distinctly(self):
         with tempfile.TemporaryDirectory() as directory:
             programs = Path(directory)
-            self.assertEqual(build_open.hmi_link_mode(programs, ()), "missing")
+            self.assertEqual(build_open.hmi_link_mode(programs, (), "stubs"), "missing")
             (programs / "libNbtAndroidAuto.so").write_bytes(b"plugin")
-            self.assertEqual(build_open.hmi_link_mode(programs, ()), "reused")
-            self.assertEqual(build_open.hmi_link_mode(programs, ("libNbtAndroidAuto.so",)), "stubs")
+            self.assertEqual(build_open.hmi_link_mode(programs, (), "real"), "reused")
+            for mode in ("real", "stubs"):
+                self.assertEqual(build_open.hmi_link_mode(programs, ("libNbtAndroidAuto.so",), mode), mode)
+
+    def test_real_framework_libraries_must_exist_and_mount_read_only(self):
+        self.assertEqual(build_open.hmi_build_options(None), ("stubs", []))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in build_open.HMI_LIBRARIES:
+                with self.assertRaisesRegex(SystemExit, "must contain nonempty"):
+                    build_open.hmi_build_options(root)
+                (root / name).write_bytes(b"fixture")
+            mode, options = build_open.hmi_build_options(root)
+            self.assertEqual(mode, "real")
+            self.assertEqual(options, ["-v", str(root.resolve()) + ":/hmi-libs:ro", "-e", "HMI_LIBS=/hmi-libs"])
+            (root / build_open.HMI_LIBRARIES[0]).write_bytes(b"")
+            with self.assertRaisesRegex(SystemExit, "must contain nonempty"):
+                build_open.hmi_build_options(root)
+
+    def test_explicit_hmi_modes_are_exclusive_and_real_requires_plugin(self):
+        script = str(Path(build_open.__file__))
+        for args, message in ((["--hmi-libs", "/tmp", "--hmi-stubs"], "not allowed with argument"),
+                              (["--hmi-libs", "/tmp", "--programs", "native_service"],
+                               "requires selecting libNbtAndroidAuto.so")):
+            result = subprocess.run([sys.executable, script, *args], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
 
     def test_reuse_cannot_hide_missing_selected_output(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -24,8 +24,8 @@ Private files belong in `.local/` and build output in `build/`; both are ignored
 ## Setting up QNX 6.5.0
 
 **Experimental open toolchain (CI / prototyping only):** [toolchain/README.md](../toolchain/README.md) builds most
-programs with an open GCC 4.4.2 toolchain in Docker (no SDP, no VM), including the HMI plugin (linked against stub HMI
-libraries), while reusing `accessory_window` from an existing payload. `./flash-aa-open.sh --build-only` runs this
+programs with an open GCC 4.4.2 toolchain in Docker (no SDP, no VM), including `accessory_window` and the HMI plugin
+(linked against stub HMI libraries by default). `./flash-aa-open.sh --build-only` runs this
 experimental build; its `--install` / `--install-only` options are an explicit, unsupported experimental override. Use
 the QNX 6.5.0 VM below for supported vehicle deployment binaries.
 
@@ -170,6 +170,7 @@ python3 scripts/build_all.py --host qnx-build --hmi-stubs
 The stubs provide imported symbol names solely for linking and are not packaged. The plugin still requires the
 real BMW libraries at runtime. Successful linking does not establish ABI or runtime compatibility, and the SDP
 stub-linked path is **not yet qualified for vehicle deployment**.
+For all four SDP/open and real/stub combinations, see the [HMI build matrix](../toolchain/README.md#build-matrix).
 
 On Fedora WSL (or other Linux distributions whose OpenSSL blocks SHA-1 signatures), apply the
 [process-scoped SHA-1 override](#trust-and-connection) to the build process so both its `ssh` and `scp` children
@@ -254,7 +255,7 @@ Run the Python checks in the environment where `cryptography` is installed. If t
 runtime is missing, use a supported compiler and install its matching ASan/UBSan runtimes; a normal host test is not a
 substitute for the sanitizer run.
 
-The open cross-build uses link-only stubs and excludes `accessory_window`; it does not establish ABI compatibility or
+The open cross-build can use link-only stubs and includes an experimental `accessory_window`; it does not establish ABI compatibility or
 vehicle safety. See the [open versus SDP comparison](../toolchain/COMPARISON.md) for measured coverage and remaining
 validation. The complete SDP build and VM tests still require the toolchain and inputs described above; installer
 builds also require a release payload. MemorySanitizer is not enabled: it requires an instrumented toolchain and

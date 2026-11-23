@@ -178,7 +178,8 @@ class SessionPackageTests(unittest.TestCase):
                                  for path in out.rglob("*")))
 
     def test_manifest_provenance_validation_and_other_install_modes(self):
-        for toolchain, mode in (("qnx-sdp", "real"), ("open-experimental", "stubs")):
+        for toolchain, mode in (("qnx-sdp", "real"), ("open-experimental", "stubs"),
+                                ("open-experimental", "real")):
             with self.subTest(toolchain=toolchain), tempfile.TemporaryDirectory() as directory:
                 _, _, out = self.package_fixture(Path(directory), toolchain, mode)
                 with mock.patch.object(installer, "payload_dir", return_value=out):

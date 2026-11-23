@@ -55,7 +55,9 @@ Version needs section '.gnu.version_r' contains 1 entry:
             subprocess.run(["cc", str(source), "-o", str(binary)], check=True)
             report = abi.inventory(root, role="open")
             self.assertIn("native_service", report["programs"])
-            self.assertEqual(report["missing"]["accessory_window"], "unsupported")
+            self.assertEqual(report["missing"]["accessory_window"], "not-present")
+            self.assertEqual(report["missing"]["nbt_key"], "not-present")
+            self.assertEqual(report["missing"]["nbt_a2i_beep"], "unsupported")
             self.assertTrue(any("puts" in symbol["name"] for symbol in
                                 report["programs"]["native_service"]["elf"]["imports"]))
             binary.write_bytes(b"not an ELF")

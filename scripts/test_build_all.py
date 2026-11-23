@@ -139,6 +139,20 @@ class QnxBuildTests(unittest.TestCase):
             self.assertNotIn("QNX_HMI_LINK=", result.stdout)
             self.assertNotIn("SKIPPED:", result.stdout)
 
+    def test_explicit_real_mode_fails_when_framework_libraries_are_missing(self):
+        script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()
+        block = script.split('echo "== HMI plugin libNbtAndroidAuto.so"', 1)[1].split(
+            'echo "== nbt_reset', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src/idrive").mkdir(parents=True)
+            env = dict(os.environ, W=str(root), OUT=str(root / "out"), HMI_MODE="real",
+                       HMI_REQUIRE_REAL="1", HMI_LIBS=str(root / "missing"))
+            result = subprocess.run(["sh", "-ec", block], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Missing required HMI libraries", result.stderr)
+            self.assertNotIn("QNX_HMI_LINK=", result.stdout)
+
     def test_stub_plugin_retains_coreframework_compiler_helper(self):
         script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()
         block = script.split('echo "== HMI plugin libNbtAndroidAuto.so"', 1)[1].split(
