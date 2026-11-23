@@ -43,6 +43,14 @@ class OpenBuildTests(unittest.TestCase):
             self.assertEqual((destination / "nbt_reset").read_bytes(), b"binary")
             self.assertFalse((destination / "other").exists())
 
+    def test_records_built_reused_and_missing_plugin_distinctly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            programs = Path(directory)
+            self.assertEqual(build_open.hmi_link_mode(programs, ()), "missing")
+            (programs / "libNbtAndroidAuto.so").write_bytes(b"plugin")
+            self.assertEqual(build_open.hmi_link_mode(programs, ()), "reused")
+            self.assertEqual(build_open.hmi_link_mode(programs, ("libNbtAndroidAuto.so",)), "stubs")
+
     def test_reuse_cannot_hide_missing_selected_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

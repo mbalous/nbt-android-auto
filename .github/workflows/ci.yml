@@ -43,6 +43,8 @@ jobs:
           toolchain/qnx-open i486-pc-nto-qnx6.5.0-g++ -O2 -o /repo/build/hello_nbt /repo/src/hello_nbt.cpp
       - name: Cross-build supported programs
         run: python3 scripts/build_open.py --output-dir build/open-ci
+      - name: Check HMI link contract and artifact contents
+        run: python3 scripts/check_hmi_contract.py build/open-ci --negative-link-test
       - name: Record ELF metadata and hashes
         run: |
           cd build/open-ci
@@ -64,6 +66,7 @@ jobs:
             build/open-ci/programs/
             build/open-ci/plugin-resources/
             build/open-ci/build.log
+            build/open-ci/build-provenance.json
             build/open-ci/abi-inputs.json
             build/open-ci/abi-inventory.json
             build/open-ci/SHA256SUMS

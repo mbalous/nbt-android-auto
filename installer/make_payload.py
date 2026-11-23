@@ -1,4 +1,4 @@
-"""Collect the car-tested build outputs into installer/payload (+ manifest.json with SHA-256 per file).
+"""Collect build outputs into installer/payload (+ manifest.json with provenance and SHA-256 per file).
 Usage: python installer/make_payload.py [version] --built build/qnx-build-<time> [--pem-dir <folder>]
 The payload contains binaries and the head-unit TLS identity; it is not committed (see .gitignore) but bundled into the
 release builds. Rebuild libNbtAndroidAuto.so in the QNX VM after any change to src/idrive/aa_entry_plugin.cpp first.
@@ -13,6 +13,8 @@ import json
 import shutil
 import time
 from pathlib import Path
+
+from nbt_aa_installer import InstallError, validate_provenance
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / 'installer' / 'payload'
@@ -83,15 +85,17 @@ def main():
     version = args.version
     built = args.built.resolve() if args.built else latest_build().resolve()
     files = built_files(built, args.pem_dir.resolve())
-    pems = {}
-    for source, name, _, _ in files:   # read the PEMs before OUT is replaced (they may live in it)
-        if name.endswith('.pem'):
-            pems[name] = source.read_bytes()
+    try:
+        provenance = json.loads((built / 'build-provenance.json').read_text(encoding='utf-8'))
+        data_by_name = {name: source.read_bytes() for source, name, _, _ in files}
+        validate_provenance(provenance, data_by_name['plugin/libNbtAndroidAuto.so'])
+    except (OSError, ValueError, InstallError) as exc:
+        raise SystemExit('Cannot package build: %s' % exc) from exc
     if OUT.exists():
         shutil.rmtree(OUT)
     entries = []
     for source, name, target, mode in files:
-        data = pems[name] if name in pems else source.read_bytes()
+        data = data_by_name[name]
         if name.endswith('.sh'):
             data = data.replace(b'\r\n', b'\n')     # the car's shell does not accept CR
         destination = OUT / name
@@ -100,7 +104,8 @@ def main():
         entries.append({'source': name, 'target': target, 'mode': mode, 'size': len(data),
                         'sha256': hashlib.sha256(data).hexdigest()})
         print('%-42s %8d' % (name, len(data)))
-    (OUT / 'manifest.json').write_text(json.dumps({'version': version, 'files': entries}, indent=2), encoding='utf-8')
+    (OUT / 'manifest.json').write_text(json.dumps({'version': version, 'files': entries,
+                                                  'build_provenance': provenance}, indent=2), encoding='utf-8')
     print('payload', version, '->', OUT)
 
 

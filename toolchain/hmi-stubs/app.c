@@ -1,0 +1,11 @@
+void _ZN3bmw11BasicStringIcEC1EPKc(void) {}
+void _ZN3bmw11BasicStringIcED1Ev(void) {}
+void _ZN3bmw9PluginApp10addHandlerEjjRKNS_8DelegateIbRKNS_6ParcelEvvvEE(void) {}
+void _ZN3bmw9PluginApp11updateModelEjRKNS_6TextIDE(void) {}
+void _ZN3bmw9PluginApp11updateModelEji(void) {}
+void _ZN3bmw9PluginApp5startEv(void) {}
+void _ZN3bmw9PluginApp12triggerEventEj(void) {}
+void _ZN3bmw9PluginApp4postEPNS_8RunnableEj(void) {}
+void _ZN3bmw9PluginAppC1ERNS_11IDispatcherENS_11BasicStringIcEERKNS_6BundleES7_(void) {}
+void _ZN3bmw9PluginAppD1Ev(void) {}
+void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}

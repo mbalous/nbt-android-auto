@@ -148,9 +148,10 @@ Which program is built from which files: [src/README.md](../src/README.md).
    `NBT_AAD_REVISION` in `scripts/build_all.py` (all other Python build/test scripts import it from there), plus
    `flash-aa-open.sh`, `.github/workflows/ci.yml`, and docs, then check `scripts/aa_session_overlay.py` and
    `patches/*.patch` against the new commit.
-2. **Two HMI libraries from your own NBT** for the plugin: copy `libAppFramework.A.so` and `libCoreFramework.A.so` from
+2. **For the default build**, copy two HMI libraries from your own NBT for the plugin: `libAppFramework.A.so` and `libCoreFramework.A.so` from
    the HMI's library directory on the head unit (read only) into a folder in the VM, e.g. `~/.nbt-build/hmi-libs/`.
-   They are BMW software: never commit or publish them. Without them everything except the plugin is built.
+   They are BMW software: never commit or publish them. Without them the default build skips the plugin.
+   Alternatively, `--hmi-stubs` builds the plugin without these files; this path is not yet vehicle-qualified.
 3. SSH from your PC to the VM works with a key (see [QNX VM](#qnx-vm)); the build runs as the normal VM user, not root.
    Mbed TLS 3.6.7 is downloaded automatically on the first run (SHA-256 checked).
 
@@ -159,6 +160,16 @@ Which program is built from which files: [src/README.md](../src/README.md).
 ```sh
 python3 scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
 ```
+
+For a complete SDP build without BMW libraries or a car:
+
+```sh
+python3 scripts/build_all.py --host qnx-build --hmi-stubs
+```
+
+The stubs provide imported symbol names solely for linking and are not packaged. The plugin still requires the
+real BMW libraries at runtime. Successful linking does not establish ABI or runtime compatibility, and the SDP
+stub-linked path is **not yet qualified for vehicle deployment**.
 
 On Fedora WSL (or other Linux distributions whose OpenSSL blocks SHA-1 signatures), apply the
 [process-scoped SHA-1 override](#trust-and-connection) to the build process so both its `ssh` and `scp` children
@@ -178,10 +189,11 @@ example unpacked from a release ZIP). The run takes about 5 minutes (most of it 
 - `build/qnx-build-<time>-<id>/programs/` - all programs for the head unit, plus `boot.sh` / `restart.sh`
 - `build/qnx-build-<time>-<id>/plugin-resources/` - plugin XML, manifest and the text/image ZIPs
 - `build/qnx-build-<time>-<id>/build.log` - the full VM log with the comparison table
+- `build/qnx-build-<time>-<id>/build-provenance.json` - toolchain, HMI link mode and plugin hash
 
 Each build creates a unique VM directory. An upload or artifact download failure retains that directory and reports
 its path so the failure can be investigated; the program does not treat an interrupted download as a successful build.
-If the plugin was skipped, install the two HMI libraries on the VM and rebuild before packaging.
+If the plugin was skipped, install the two HMI libraries on the VM or opt in to `--hmi-stubs` and rebuild.
 
 What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compiles (in the VM):
 
@@ -195,7 +207,7 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 | `decode_runner` | C++, `-O2` |
 | `fifo_http` | C++, no optimisation |
 | `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | C++ `-O1`, with the MOST/DSI client from `knob/ref/` |
-| `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
+| `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries or opt-in stubs |
 
 **Verified on 2026-11-11** against installer 2026.11.10.2: `native_service`, `decode_runner`, `fifo_http`,
 `accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` were byte-identical; the session executable,
@@ -210,6 +222,9 @@ read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped prog
    the explicit `--built` directory produced by `scripts/build_all.py` so there is no ambiguity about which build is
    packaged. `--pem-dir` defaults to `installer/payload/rt` (the PEM files are read before the folder is replaced; on a
    fresh checkout take them from `rt/` of a release payload).
+   The manifest records build provenance. Builds made before provenance was added must be rebuilt before packaging.
+   Installing an SDP stub-linked payload requires `--allow-qnx-hmi-stubs` in the CLI or explicit GUI confirmation;
+   this is an accidental-deployment guard, not a signature or proof of safety.
 2. Run the Python installer directly on Linux or WSL (`pip3 install "paramiko>=3.4,<4"` — paramiko must stay below 4
    because the NBT only offers `ssh-rsa`). No platform-packaged installer binaries are built.
 3. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install

@@ -1,0 +1,31 @@
+{
+  "needed": ["libAppFramework.A.so", "libCoreFramework.A.so", "libcpp-ne.so.4", "libc.so.3"],
+  "stubs": {
+    "libAppFramework.A.so": [
+      "_ZN3bmw11BasicStringIcEC1EPKc",
+      "_ZN3bmw11BasicStringIcED1Ev",
+      "_ZN3bmw9PluginApp10addHandlerEjjRKNS_8DelegateIbRKNS_6ParcelEvvvEE",
+      "_ZN3bmw9PluginApp11updateModelEjRKNS_6TextIDE",
+      "_ZN3bmw9PluginApp11updateModelEji",
+      "_ZN3bmw9PluginApp12triggerEventEj",
+      "_ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE",
+      "_ZN3bmw9PluginApp4postEPNS_8RunnableEj",
+      "_ZN3bmw9PluginApp5startEv",
+      "_ZN3bmw9PluginAppC1ERNS_11IDispatcherENS_11BasicStringIcEERKNS_6BundleES7_",
+      "_ZN3bmw9PluginAppD1Ev"
+    ],
+    "libCoreFramework.A.so": ["_ZN3bmw6TextIDC1Ej", "_ZNK3bmw6Parcel8readBoolERb"],
+    "libcpp-ne.so.4": ["_ZdlPv", "_Znwj", "__cxa_pure_virtual"]
+  },
+  "libc_imports": [
+    "__get_errno_ptr", "access", "atoi", "clock_gettime", "close", "environ", "open",
+    "pthread_attr_destroy", "pthread_attr_init", "pthread_attr_setdetachstate", "pthread_create",
+    "read", "sigemptyset", "sigfillset", "snprintf", "spawn", "sscanf", "stat", "strstr",
+    "time", "unlink", "write"
+  ],
+  "weak_imports": ["_Jv_RegisterClasses", "__deregister_frame_info", "__register_frame_info"],
+  "plugin_exports": [
+    "__bss_start", "_btext", "_edata", "_end", "_fini", "_init", "pluginAppInfo",
+    "_ZN3bmw8RunnableD0Ev", "_ZN3bmw8RunnableD1Ev", "_ZTVN3bmw8RunnableE"
+  ]
+}

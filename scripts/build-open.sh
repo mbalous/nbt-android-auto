@@ -70,25 +70,9 @@ if want libNbtAndroidAuto.so; then
   echo "== HMI plugin libNbtAndroidAuto.so (stub-linked)"
   S=$W/hmi-stubs
   mkdir -p $S
-  cat > $S/app.c <<'EOS'
-void _ZN3bmw11BasicStringIcEC1EPKc(void) {}
-void _ZN3bmw11BasicStringIcED1Ev(void) {}
-void _ZN3bmw9PluginApp10addHandlerEjjRKNS_8DelegateIbRKNS_6ParcelEvvvEE(void) {}
-void _ZN3bmw9PluginApp11updateModelEjRKNS_6TextIDE(void) {}
-void _ZN3bmw9PluginApp11updateModelEji(void) {}
-void _ZN3bmw9PluginApp5startEv(void) {}
-void _ZN3bmw9PluginApp12triggerEventEj(void) {}
-void _ZN3bmw9PluginApp4postEPNS_8RunnableEj(void) {}
-void _ZN3bmw9PluginAppC1ERNS_11IDispatcherENS_11BasicStringIcEERKNS_6BundleES7_(void) {}
-void _ZN3bmw9PluginAppD1Ev(void) {}
-void _ZNK3bmw6Parcel8readBoolERb(void) {}
-void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
-EOS
-  echo 'void _ZN3bmw6TextIDC1Ej(void) {}' > $S/core.c
-  printf 'void _Znwj(void) {}\nvoid _ZdlPv(void) {}\nvoid __cxa_pure_virtual(void) {}\n' > $S/cpp.c
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so $S/app.c -o $S/libAppFramework.A.so
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so $S/core.c -o $S/libCoreFramework.A.so
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libcpp-ne.so.4 $S/cpp.c -o $S/libcpp-ne.so.4
+  $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so $W/toolchain/hmi-stubs/app.c -o $S/libAppFramework.A.so
+  $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so $W/toolchain/hmi-stubs/core.c -o $S/libCoreFramework.A.so
+  $CC -shared -fPIC -nostdlib -Wl,-soname,libcpp-ne.so.4 $W/toolchain/hmi-stubs/cpp.c -o $S/libcpp-ne.so.4
   cd $W/src/idrive
   $T-g++ -O2 -Wall -Wextra -D_QNX_SOURCE -DNBT_OPEN_TOOLCHAIN -shared -fPIC -fno-exceptions -fno-rtti -nodefaultlibs -Wl,-z,defs \
     aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L$S -lAppFramework.A -lCoreFramework.A $S/libcpp-ne.so.4 -lc -lgcc

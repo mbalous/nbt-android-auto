@@ -108,3 +108,16 @@ Evidence in `build/open-abi-probe-*` covers constructor/destructor execution, li
 USB layouts and constants, iovec bytes, and `devctlv` lookup and its invalid-descriptor error path. It does not load
 the plugin, exercise USB hardware, start a vehicle service, or establish behavior on the car. VM files are retained
 on failure. `accessory_window` remains unsupported; the HMI and C++ runtime boundaries still need validation.
+
+## HMI link-only stubs
+
+The shared sources in `toolchain/hmi-stubs/` provide symbol names for the BMW framework and the open build's C++
+link. They are used by both the open build and the opt-in SDP stub build, but are never runtime libraries and must
+not be installed. CI checks the generated stub SONAMEs and exports, the open plugin's dependencies, imports and
+exports against `toolchain/hmi-stubs/contract.json`, and excludes stub files from build artifacts. The packaging test
+also checks that a stub in the build output is not included in the payload. CI removes one stub symbol in an isolated
+fixture and confirms that the plugin link fails.
+
+Review intentional changes to the symbol contract against the target and update the contract explicitly; do not
+regenerate it blindly from the build. Successful checks establish link-time consistency only, not C++ ABI or real HMI
+behavior. SDP and vehicle qualification remain separate.

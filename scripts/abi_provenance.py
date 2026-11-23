@@ -20,7 +20,7 @@ def shared_source_digest(archive_path):
     digest = hashlib.sha256()
     with tarfile.open(archive_path) as archive:
         members = sorted((item for item in archive if item.isfile() and
-                          item.name.startswith(("src/", "reference/", "mbedtls-"))),
+                          item.name.startswith(("src/", "reference/", "mbedtls-", "toolchain/hmi-stubs/"))),
                          key=lambda item: item.name)
         if not members or len({item.name for item in members}) != len(members):
             raise ValueError("Source archive is empty or contains duplicate shared paths")

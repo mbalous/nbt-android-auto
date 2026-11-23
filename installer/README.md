@@ -101,7 +101,11 @@ the head unit is no longer available. Logs may contain vehicle and phone details
   specific build directory:
   `python3 installer/make_payload.py <version> --built build/qnx-build-<time>-<id>`
   collects the build files in `installer/payload/`. `manifest.json` contains the SHA-256 for each file. The folder is
-  not checked in.
+  not checked in. The packager needs build provenance, so rebuild older build directories first.
+- `python3 scripts/build_all.py --hmi-stubs` builds the HMI plugin without car libraries using the SDP VM.
+  This path is not yet vehicle-qualified. The installer records its link mode and requires
+  `--allow-qnx-hmi-stubs` for CLI installation or explicit GUI confirmation. This opt-in is not proof of safety
+  or a tamper-resistant approval. The real BMW libraries must still be present on the head unit.
 - The installer is distributed and run directly with Python 3 on Linux and WSL (no packaged OS binaries).
 - For testing in a QNX VM, the hidden `--key <ssh-key>` and `--root <test-directory>` options install under a test
   directory instead of the system paths.

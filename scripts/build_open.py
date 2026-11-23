@@ -25,8 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from abi_provenance import capture_inputs, write_inputs  # noqa: E402
-from build_all import (MBEDTLS_SHA256, NBT_AAD_REVISION, PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad,
-                       add_repo_sources)  # noqa: E402
+from build_all import (MBEDTLS_SHA256, NBT_AAD_REVISION, PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_repo_sources,
+                       write_provenance)  # noqa: E402
 
 OPEN_PROGRAMS = ("nbt_android_auto", "native_service", "decode_runner", "fifo_http", "nbt_knob",
                  "nbt_hwvideo", "nbt_cluster", "audioconn", "nbt_reset", "libNbtAndroidAuto.so")
@@ -50,6 +50,14 @@ def copy_built_programs(source, destination, selected):
         if not path.is_file() or path.stat().st_size == 0:
             raise SystemExit("Open build did not produce a nonempty " + name)
         shutil.copy(path, destination / name)
+
+
+def hmi_link_mode(programs, selected):
+    if "libNbtAndroidAuto.so" in selected:
+        return "stubs"
+    if (programs / "libNbtAndroidAuto.so").is_file():
+        return "reused"
+    return "missing"
 
 
 def main():
@@ -117,8 +125,8 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
-    hmi_link = ("stubs" if "libNbtAndroidAuto.so" in selected else
-                "reused" if "libNbtAndroidAuto.so" in reused else "missing")
+    hmi_link = hmi_link_mode(programs, selected)
+    write_provenance(out, "open-experimental", hmi_link, run_id)
     write_inputs(out, inputs, reused=reused, hmi_link=hmi_link)
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
