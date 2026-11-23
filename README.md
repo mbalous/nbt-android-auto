@@ -183,7 +183,7 @@ files and shows how they work together.
 Help is welcome, especially with testing on different phones, NBT software levels and cars. Supported vehicle
 binaries are built in the QNX 6.5.0 VM with `python3 scripts/build_all.py` (see
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)). An experimental [open toolchain](toolchain/README.md) is also available
-for Linux/WSL CI and local prototyping, but it reuses an existing `accessory_window` binary and is not the supported
+for Linux/WSL CI and local prototyping, but it is not the supported
 vehicle deployment path. `./flash-aa-open.sh` builds only by default; `--install` / `--install-only` is an explicit,
 unsupported experimental override.
 `--install-only`. Start with [CONTRIBUTING.md](CONTRIBUTING.md).

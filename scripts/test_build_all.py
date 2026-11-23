@@ -1,6 +1,11 @@
 """Regression tests for the QNX build transport and artifact handling."""
 from pathlib import Path
+import hashlib
+import json
+import os
 import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -52,8 +57,129 @@ class QnxBuildTests(unittest.TestCase):
         with mock.patch.object(build_all, "PROGRAMS", {"libNbtAndroidAuto.so": "plugin"}), \
                 mock.patch.object(build_all.subprocess, "run") as run:
             build_all.fetch_programs(client, [], "qnx-build", ".nbt-build/test", Path("/tmp"),
-                                     "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so")
+                                     "missing")
             run.assert_not_called()
+
+    def test_vm_link_mode_must_match_request_and_be_unambiguous(self):
+        self.assertEqual(build_all.hmi_link_mode("QNX_HMI_LINK=stubs\n", "stubs"), "stubs")
+        self.assertEqual(build_all.hmi_link_mode("QNX_HMI_LINK=missing\n", "real"), "missing")
+        for log, requested in (("", "stubs"), ("QNX_HMI_LINK=missing\n", "stubs"),
+                               ("QNX_HMI_LINK=real\n", "stubs"),
+                               ("QNX_HMI_LINK=real\nQNX_HMI_LINK=stubs\n", "real")):
+            with self.subTest(log=log), self.assertRaises(SystemExit):
+                build_all.hmi_link_mode(log, requested)
+
+    def test_hmi_build_flags_are_mutually_exclusive(self):
+        result = subprocess.run([sys.executable, str(Path(build_all.__file__)), "--hmi-stubs",
+                                 "--hmi-libs", "/tmp/libs"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not allowed with argument", result.stderr)
+
+    def test_hmi_library_path_preserves_home_expansion_without_shell_injection(self):
+        self.assertEqual(build_all.hmi_libs_assignment("$HOME/.nbt-build/hmi-libs"),
+                         ' HMI_LIBS="$HOME"/.nbt-build/hmi-libs')
+        self.assertEqual(build_all.hmi_libs_assignment("/tmp/lib; echo unsafe"),
+                         " HMI_LIBS='/tmp/lib; echo unsafe'")
+
+    def test_provenance_binds_plugin_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / "programs").mkdir()
+            (out / "programs" / "libNbtAndroidAuto.so").write_bytes(b"plugin")
+            build_all.write_provenance(out, "qnx-sdp", "stubs", "test-build")
+            record = json.loads((out / "build-provenance.json").read_text())
+            self.assertEqual(record["hmi_link"], "stubs")
+            self.assertEqual(record["plugin_sha256"], hashlib.sha256(b"plugin").hexdigest())
+
+    def test_build_archive_generates_stub_sources_from_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sources.tar"
+            archive = build_all.Archive(path)
+            build_all.add_repo_sources(archive)
+            archive.close()
+            with tarfile.open(path) as tar:
+                contract = json.load(tar.extractfile("toolchain/hmi-stubs/contract.json"))
+                for name, source in build_all.hmi_stub_sources(contract).items():
+                    self.assertEqual(tar.extractfile("toolchain/hmi-stubs/" + name).read(), source)
+                self.assertNotIn("src/idrive/hmi-stubs/app.c", tar.getnames())
+
+    def test_hmi_generator_tracks_contract_changes_and_rejects_bad_symbols(self):
+        path = build_all.ROOT / "toolchain/hmi-stubs/contract.json"
+        contract = json.loads(path.read_text())
+        original = build_all.hmi_stub_sources(contract)
+        symbols = contract["stubs"]["libAppFramework.A.so"]
+        symbols.append("_ZN3bmw7newStubEv")
+        generated = build_all.hmi_stub_sources(contract)
+        self.assertIn(b"void _ZN3bmw7newStubEv(void) {}\n", generated["app.c"])
+        self.assertNotEqual(original["app.c"], generated["app.c"])
+        for invalid in ("not-a-c-identifier", symbols[0]):
+            with self.subTest(invalid=invalid):
+                symbols[-1] = invalid
+                with self.assertRaises(ValueError):
+                    build_all.hmi_stub_sources(contract)
+        symbols[-1] = contract["stubs"]["libCoreFramework.A.so"][0]
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            build_all.hmi_stub_sources(contract)
+        del contract["stubs"]["libAppFramework.A.so"]
+        with self.assertRaisesRegex(ValueError, "three stub libraries"):
+            build_all.hmi_stub_sources(contract)
+        with self.assertRaisesRegex(ValueError, "three stub libraries"):
+            build_all.hmi_stub_sources(None)
+
+    def test_stub_compiler_failure_does_not_skip_plugin_or_fall_back(self):
+        script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()
+        block = script.split('echo "== HMI plugin libNbtAndroidAuto.so"', 1)[1].split(
+            'echo "== nbt_reset', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src/idrive").mkdir(parents=True)
+            env = dict(os.environ, W=str(root), OUT=str(root / "out"), HMI_MODE="stubs", CC="false")
+            result = subprocess.run(["sh", "-ec", block], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("QNX_HMI_LINK=", result.stdout)
+            self.assertNotIn("SKIPPED:", result.stdout)
+
+    def test_explicit_real_mode_fails_when_framework_libraries_are_missing(self):
+        script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()
+        block = script.split('echo "== HMI plugin libNbtAndroidAuto.so"', 1)[1].split(
+            'echo "== nbt_reset', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src/idrive").mkdir(parents=True)
+            env = dict(os.environ, W=str(root), OUT=str(root / "out"), HMI_MODE="real",
+                       HMI_REQUIRE_REAL="1", HMI_LIBS=str(root / "missing"))
+            result = subprocess.run(["sh", "-ec", block], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Missing required HMI libraries", result.stderr)
+            self.assertNotIn("QNX_HMI_LINK=", result.stdout)
+
+    def test_stub_plugin_retains_coreframework_compiler_helper(self):
+        script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()
+        block = script.split('echo "== HMI plugin libNbtAndroidAuto.so"', 1)[1].split(
+            'echo "== nbt_reset', 1)[0]
+        for mode in ("real", "stubs"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "src/idrive").mkdir(parents=True)
+                (root / "out").mkdir()
+                (root / "bin").mkdir()
+                (root / "libs").mkdir()
+                for name in ("libAppFramework.A.so", "libCoreFramework.A.so"):
+                    (root / "libs" / name).touch()
+                qcc = root / "bin/qcc"
+                qcc.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CAPTURE"\n'
+                               'while [ "$#" -gt 0 ]; do\n'
+                               '  if [ "$1" = -o ]; then shift; : > "$1"; break; fi\n'
+                               '  shift\ndone\n')
+                qcc.chmod(0o700)
+                capture = root / "args"
+                env = dict(os.environ, W=str(root), OUT=str(root / "out"), HMI_MODE=mode, CC="qcc",
+                           HMI_LIBS=str(root / "libs"), CAPTURE=str(capture),
+                           PATH=str(root / "bin") + os.pathsep + os.environ["PATH"])
+                result = subprocess.run(["sh", "-ec", block], env=env, capture_output=True, text=True, check=True)
+                plugin = next(line for line in capture.read_text().splitlines() if "aa_entry_plugin.cpp" in line)
+                self.assertEqual("-Wl,-u,__divdi3" in plugin, mode == "stubs")
+                self.assertIn("QNX_HMI_LINK=" + mode, result.stdout)
 
     def test_empty_artifact_is_not_reported_as_success(self):
         client = build_all.OpenSSH()

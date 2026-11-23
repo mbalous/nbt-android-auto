@@ -43,6 +43,34 @@ jobs:
           toolchain/qnx-open i486-pc-nto-qnx6.5.0-g++ -O2 -o /repo/build/hello_nbt /repo/src/hello_nbt.cpp
       - name: Cross-build supported programs
         run: python3 scripts/build_open.py --output-dir build/open-ci
+      - name: Check HMI link contract and artifact contents
+        run: python3 scripts/check_hmi_contract.py build/open-ci --negative-link-test
+      - name: Compile resource-manager ABI probe
+        run: toolchain/qnx-open i486-pc-nto-qnx6.5.0-gcc -Wall -o /repo/build/open-ci/resource-abi-probe /repo/toolchain/probes/resource_abi_probe.c
+      - name: Exercise real-framework mode with synthetic libraries
+        run: |
+          python3 scripts/build_open.py --hmi-libs build/open-ci/work/hmi-stubs \
+            --programs libNbtAndroidAuto.so --output-dir build/open-real-fixture
+          PYTHONPATH=scripts python3 - <<'PY'
+          import json
+          import tarfile
+          from pathlib import Path
+          from check_hmi_contract import check_no_stubs, check_plugin
+          from compare_qnx_abi import inspect_elf
+
+          build = Path("build/open-real-fixture")
+          contract = json.loads(Path("toolchain/hmi-stubs/contract.json").read_text())
+          check_plugin(inspect_elf(build / "programs/libNbtAndroidAuto.so"), contract)
+          fixtures = Path("build/open-ci/work/hmi-stubs")
+          check_no_stubs((build / "programs", build / "plugin-resources"),
+                         [fixtures / name for name in contract["stubs"]])
+          with tarfile.open(build / "source.tar") as archive:
+              if any(Path(item.name).name in contract["stubs"] for item in archive):
+                  raise SystemExit("Framework library found in source archive")
+          for name in ("build-provenance.json", "abi-inputs.json"):
+              if json.loads((build / name).read_text())["hmi_link"] != "real":
+                  raise SystemExit("Incorrect HMI link mode in " + name)
+          PY
       - name: Record ELF metadata and hashes
         run: |
           cd build/open-ci
@@ -64,6 +92,7 @@ jobs:
             build/open-ci/programs/
             build/open-ci/plugin-resources/
             build/open-ci/build.log
+            build/open-ci/build-provenance.json
             build/open-ci/abi-inputs.json
             build/open-ci/abi-inventory.json
             build/open-ci/SHA256SUMS

@@ -8,13 +8,16 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #include <dlfcn.h>
 
 #ifdef NBT_OPEN_TOOLCHAIN
+#include "qnx_spawn_compat.h"
 struct ProbeIov { void *base; unsigned length; };
 #else
 #include <devctl.h>
+#include <spawn.h>
 #include <sys/neutrino.h>
 typedef iov_t ProbeIov;
 #endif
@@ -48,10 +51,58 @@ static void *thread_main(void *)
     return NULL;
 }
 
-int main()
+static void check_spawn(char *path)
+{
+    struct inheritance inherit;
+    memset(&inherit, 0, sizeof(inherit));
+    inherit.flags = SPAWN_SETGROUP | SPAWN_SETSIGMASK | SPAWN_SETSIGDEF | SPAWN_NOZOMBIE;
+    inherit.pgroup = SPAWN_NEWPGROUP;
+    require(sigemptyset(&inherit.sigmask) == 0, "spawn empty mask");
+    require(sigfillset(&inherit.sigdefault) == 0, "spawn default signals");
+    sigset_t parent_mask, previous_mask;
+    require(sigemptyset(&parent_mask) == 0 && sigaddset(&parent_mask, SIGUSR1) == 0, "parent signal set");
+    require(sigprocmask(SIG_BLOCK, &parent_mask, &previous_mask) == 0, "parent block signal");
+    void (*previous_handler)(int) = signal(SIGUSR2, SIG_IGN);
+    require(previous_handler != SIG_ERR, "parent ignore signal");
+    int channel[2];
+    require(pipe(channel) == 0, "spawn pipe");
+    int nul = open("/dev/null", O_RDONLY);
+    require(nul >= 0, "spawn stdin");
+    int fd_map[3] = {nul, channel[1], channel[1]};
+    char arg[] = "--spawn-child";
+    char *args[] = {path, arg, NULL};
+    char *env[] = {NULL};
+    require(spawn(path, 3, fd_map, &inherit, args, env) > 0, "spawn child");
+    require(close(nul) == 0 && close(channel[1]) == 0, "close spawn descriptors");
+    require(signal(SIGUSR2, previous_handler) != SIG_ERR, "restore signal handler");
+    require(sigprocmask(SIG_SETMASK, &previous_mask, NULL) == 0, "restore signal mask");
+    char output[512];
+    size_t used = 0;
+    ssize_t count;
+    while ((count = read(channel[0], output + used, sizeof(output) - used - 1)) > 0) {
+        used += (size_t)count;
+        require(used < sizeof(output) - 1, "spawn child output too long");
+    }
+    require(count == 0 && close(channel[0]) == 0, "read spawn child");
+    output[used] = '\0';
+    require(strstr(output, "SPAWN_CHILD_OK") != NULL, "spawn child behavior");
+    puts("spawn group, signal reset and fd map OK");
+}
+
+int main(int argc, char **argv)
 {
     alarm(30);
     require(initialized == 1, "constructor did not run");
+    if (argc == 2 && strcmp(argv[1], "--spawn-child") == 0) {
+        sigset_t mask;
+        require(getpgrp() == getpid(), "spawn process group");
+        require(sigprocmask(SIG_SETMASK, NULL, &mask) == 0, "child signal mask");
+        require(sigismember(&mask, SIGUSR1) == 0, "child signal unblocked");
+        require(signal(SIGUSR2, SIG_DFL) == SIG_DFL, "child signal default");
+        puts("SPAWN_CHILD_OK");
+        return 0;
+    }
+    require(argc == 1, "unexpected arguments");
     errno = EBUSY;
     pthread_t thread;
     require(pthread_create(&thread, NULL, thread_main, NULL) == 0, "pthread_create");
@@ -91,6 +142,19 @@ int main()
     CONSTANT(URB_SHORT_XFER_OK);
     CONSTANT(USBD_URB_STATUS_MASK);
     CONSTANT(USBD_STATUS_CMP);
+
+    SIZE(sigset_t);
+    SIZE(struct inheritance);
+    OFFSET(struct inheritance, flags);
+    OFFSET(struct inheritance, pgroup);
+    OFFSET(struct inheritance, sigmask);
+    OFFSET(struct inheritance, sigdefault);
+    CONSTANT(SPAWN_SETGROUP);
+    CONSTANT(SPAWN_SETSIGMASK);
+    CONSTANT(SPAWN_SETSIGDEF);
+    CONSTANT(SPAWN_NOZOMBIE);
+    CONSTANT(SPAWN_NEWPGROUP);
+    check_spawn(argv[0]);
 
     ProbeIov iov;
     memset(&iov, 0, sizeof(iov));

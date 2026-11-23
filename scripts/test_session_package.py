@@ -5,8 +5,10 @@ import contextlib
 from pathlib import Path
 import re
 import socket
+import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import xml.etree.ElementTree as ET
@@ -23,8 +25,9 @@ def load_module(name, path):
     return module
 
 
+sys.path.insert(0, str(ROOT / "installer"))
+import nbt_aa_installer as installer
 payload = load_module("make_payload", "installer/make_payload.py")
-installer = load_module("nbt_aa_installer", "installer/nbt_aa_installer.py")
 
 
 class SessionPackageTests(unittest.TestCase):
@@ -49,11 +52,17 @@ class SessionPackageTests(unittest.TestCase):
                     source.parent.mkdir(parents=True, exist_ok=True)
                     source.write_bytes(b"fixture")
 
+            (built / "programs/libAppFramework.A.so").write_bytes(b"link-only-stub")
+            (built / "programs/nbt_a2i_beep").write_bytes(b"diagnostic")
+            build_all.write_provenance(built, "qnx-sdp", "real", "test-build")
             with mock.patch.object(payload, "OUT", out), mock.patch(
                     "sys.argv", ["make_payload.py", "test", "--built", str(built), "--pem-dir", str(pem_dir)]):
                 payload.main()
 
             manifest = json.loads((out / "manifest.json").read_text())
+            self.assertFalse(any(path.name == "libAppFramework.A.so" for path in out.rglob("*")))
+            self.assertFalse(any(path.name == "nbt_a2i_beep" for path in out.rglob("*")))
+            self.assertEqual(manifest["build_provenance"]["hmi_link"], "real")
             session = next(item for item in manifest["files"] if item["source"] == "rt/nbt_android_auto")
             executable = Path(session["source"]).name
             self.assertEqual(session["target"], installer.RT_DIR + "/" + executable)
@@ -105,6 +114,105 @@ class SessionPackageTests(unittest.TestCase):
             self.assertEqual(payload.latest_build(root), root / "qnx-build-20261120T110000")
             with self.assertRaises(SystemExit):
                 payload.latest_build(root / "empty")
+
+    def package_fixture(self, root, toolchain="qnx-sdp", mode="stubs"):
+        built, pem_dir, out = root / "build", root / "pems", root / "payload"
+        for source, _, _, _ in payload.built_files(built, pem_dir):
+            if source.is_relative_to(root):
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(b"fixture")
+        build_all.write_provenance(built, toolchain, mode, "test-build")
+        with mock.patch.object(payload, "OUT", out), mock.patch(
+                "sys.argv", ["make_payload.py", "test", "--built", str(built), "--pem-dir", str(pem_dir)]):
+            payload.main()
+        return built, pem_dir, out
+
+    def test_packaging_rejects_missing_invalid_or_changed_metadata_before_removing_output(self):
+        for bad in ("missing", "unknown", "changed"):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                built, pem_dir, out = self.package_fixture(root)
+                marker = out / "keep"
+                marker.write_text("existing output")
+                metadata = built / "build-provenance.json"
+                if bad == "missing":
+                    metadata.unlink()
+                elif bad == "unknown":
+                    record = json.loads(metadata.read_text())
+                    record["schema"] = 2
+                    metadata.write_text(json.dumps(record))
+                else:
+                    (built / "programs" / "libNbtAndroidAuto.so").write_bytes(b"changed")
+                with mock.patch.object(payload, "OUT", out), mock.patch(
+                        "sys.argv", ["make_payload.py", "test", "--built", str(built), "--pem-dir", str(pem_dir)]):
+                    with self.assertRaisesRegex(SystemExit, "Cannot package build"):
+                        payload.main()
+                self.assertEqual(marker.read_text(), "existing output")
+
+    def test_stub_install_requires_opt_in_before_connect_or_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, out = self.package_fixture(Path(directory))
+            nbt = mock.Mock()
+            with mock.patch.object(installer, "payload_dir", return_value=out), \
+                    mock.patch.object(installer, "Nbt") as connect:
+                with self.assertRaisesRegex(installer.InstallError, "requires --allow-qnx-hmi-stubs"):
+                    installer.run_cli(SimpleNamespace(cli="install", allow_qnx_hmi_stubs=False))
+                connect.assert_not_called()
+                with self.assertRaises(installer.InstallError):
+                    installer.install(nbt, lambda _: None, root="/test", force=True, restart=True)
+                nbt.run.assert_not_called()
+                nbt.put.assert_not_called()
+                manifest = installer.load_manifest()
+                confirm = mock.Mock(return_value=False)
+                self.assertFalse(installer.confirm_gui_install(manifest, confirm))
+                confirm.assert_called_once()
+                self.assertTrue(installer.confirm_gui_install(manifest, lambda _: True))
+                with mock.patch.object(installer, "preflight"):
+                    nbt.run.return_value = (0, b"", b"")
+                    installer.install(nbt, lambda _: None, root="/test", allow_qnx_hmi_stubs=True)
+                self.assertTrue(nbt.put.called)
+                args = SimpleNamespace(cli="install", allow_qnx_hmi_stubs=True, key="key", host="unused", port=22,
+                                       user="test", known_hosts=None, root="/test", force=False, restart=False)
+                with mock.patch.object(installer, "paramiko", object()), mock.patch.object(installer, "install") as install:
+                    installer.run_cli(args)
+                    self.assertTrue(install.call_args.kwargs["allow_qnx_hmi_stubs"])
+            self.assertFalse(any(path.name in ("libAppFramework.A.so", "libCoreFramework.A.so")
+                                 for path in out.rglob("*")))
+
+    def test_manifest_provenance_validation_and_other_install_modes(self):
+        for toolchain, mode in (("qnx-sdp", "real"), ("open-experimental", "stubs"),
+                                ("open-experimental", "real")):
+            with self.subTest(toolchain=toolchain), tempfile.TemporaryDirectory() as directory:
+                _, _, out = self.package_fixture(Path(directory), toolchain, mode)
+                with mock.patch.object(installer, "payload_dir", return_value=out):
+                    manifest = installer.load_manifest()
+                    installer.check_install_allowed(manifest)
+                    confirm = mock.Mock()
+                    self.assertTrue(installer.confirm_gui_install(manifest, confirm))
+                    confirm.assert_not_called()
+                    path = out / "manifest.json"
+                    record = json.loads(path.read_text())
+                    del record["build_provenance"]
+                    path.write_text(json.dumps(record))
+                    installer.check_install_allowed(installer.load_manifest())
+
+        for bad in ("null", "unknown", "mismatch", "missing-mode"):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as directory:
+                _, _, out = self.package_fixture(Path(directory))
+                path = out / "manifest.json"
+                record = json.loads(path.read_text())
+                if bad == "null":
+                    record["build_provenance"] = None
+                elif bad == "unknown":
+                    record["build_provenance"]["toolchain"] = "unknown"
+                elif bad == "mismatch":
+                    record["build_provenance"]["plugin_sha256"] = "0" * 64
+                else:
+                    record["build_provenance"]["hmi_link"] = "missing"
+                path.write_text(json.dumps(record))
+                with mock.patch.object(installer, "payload_dir", return_value=out), \
+                        self.assertRaises(installer.InstallError):
+                    installer.load_manifest()
 
 
 @unittest.skipIf(installer.paramiko is None, "Paramiko is required for SSH tests")

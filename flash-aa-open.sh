@@ -3,8 +3,7 @@
 # flash-aa-open.sh - experimental open-toolchain build (and optional unsupported car install).
 #
 # Supported vehicle deployments should use the QNX 6.5.0 VM/SDP build (`scripts/build_all.py`).
-# This script uses the experimental Docker-based open QNX toolchain (which still reuses an
-# existing `accessory_window` binary from a prior payload).
+# This script uses the experimental Docker-based open QNX toolchain.
 #
 # Usage:
 #   ./flash-aa-open.sh                # build only; never connects to the car
@@ -48,7 +47,7 @@ esac
 # ---------------------------------------------------------------- 0. sanity
 command -v "$VENV_PY" >/dev/null 2>&1 || die "Python not found ($VENV_PY). Create .venv or install python3."
 "$VENV_PY" -c 'import paramiko' 2>/dev/null || die "paramiko missing in $VENV_PY (pip install \"paramiko>=3.4,<4\")."
-[ -f "$RELEASE/plugin/libNbtAndroidAuto.so" ] || die "Reference payload missing: $RELEASE (needed to reuse accessory_window and PEMs)."
+[ -f "$RELEASE/plugin/libNbtAndroidAuto.so" ] || die "Reference payload missing: $RELEASE (needed for PEMs and optional reused binaries)."
 
 # ---------------------------------------------------------------- 1-3. build
 if [ "$DO_BUILD" = 1 ]; then
@@ -91,6 +90,8 @@ if [ "$DO_BUILD" = 1 ]; then
 fi
 
 [ "$DO_INSTALL" = 1 ] || { echo; echo "Build only - stopping before the car. For an experimental install run: ./flash-aa-open.sh --install-only"; exit 0; }
+
+warn "Open builds now include accessory_window; its resource-manager behavior is not yet validated on the VM or car."
 
 # ---------------------------------------------------------------- 4. check the payload
 [ -f "$PAYLOAD/manifest.json" ] || die "No installer/payload yet. Run ./flash-aa-open.sh --build-only first."

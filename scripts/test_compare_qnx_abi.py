@@ -21,6 +21,7 @@ class CompareAbiTests(unittest.TestCase):
  [Requesting program interpreter: /usr/lib/ldqnx.so.2]
  0x1 (NEEDED) Shared library: [liba.so]
  0x1 (NEEDED) Shared library: [libb.so]
+ 0x3 (SONAME) Library soname: [test.so]
  0x2 (RUNPATH) Library runpath: [/a:/b]
 080511c0  00000b05 R_386_COPY 080511c0 errno
 080510a0  00001407 R_386_JUMP_SLOT 00000000 foo@VER
@@ -34,6 +35,7 @@ Version needs section '.gnu.version_r' contains 1 entry:
 """
         result = abi.parse_readelf(output)
         self.assertEqual(result["needed"], ["liba.so", "libb.so"])
+        self.assertEqual(result["soname"], "test.so")
         self.assertEqual(result["search_paths"], [{"tag": "RUNPATH", "value": "/a:/b"}])
         self.assertEqual(result["imports"][0]["name"], "foo@VER")
         self.assertEqual(result["exports"][0]["size"], 4)
@@ -41,6 +43,8 @@ Version needs section '.gnu.version_r' contains 1 entry:
         self.assertIn({"type": "R_386_COPY", "symbol": "errno", "count": 1, "symbol_sizes": [4]},
                       result["relocations"])
         self.assertEqual(result, abi.parse_readelf(output.replace("080511c0", "080522d0")))
+        with self.assertRaisesRegex(ValueError, "multiple SONAME"):
+            abi.parse_readelf(output + " 0x3 (SONAME) Library soname: [other.so]\n")
 
     def test_real_elf_and_bad_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -51,7 +55,9 @@ Version needs section '.gnu.version_r' contains 1 entry:
             subprocess.run(["cc", str(source), "-o", str(binary)], check=True)
             report = abi.inventory(root, role="open")
             self.assertIn("native_service", report["programs"])
-            self.assertEqual(report["missing"]["accessory_window"], "unsupported")
+            self.assertEqual(report["missing"]["accessory_window"], "not-present")
+            self.assertEqual(report["missing"]["nbt_key"], "not-present")
+            self.assertEqual(report["missing"]["nbt_a2i_beep"], "not-present")
             self.assertTrue(any("puts" in symbol["name"] for symbol in
                                 report["programs"]["native_service"]["elf"]["imports"]))
             binary.write_bytes(b"not an ELF")
@@ -111,10 +117,11 @@ Version needs section '.gnu.version_r' contains 1 entry:
     def test_shared_source_digest_ignores_scripts_and_expected_binaries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            def archive(path, source, script):
+            def archive(path, source, script, stub=b"stub"):
                 with tarfile.open(path, "w") as tar:
                     for name, data in (("src/a.c", source), ("build-qnx.sh", script),
-                                       ("expected/program", b"private")):
+                                       ("expected/program", b"private"),
+                                       ("toolchain/hmi-stubs/app.c", stub)):
                         info = tarfile.TarInfo(name)
                         info.size = len(data)
                         tar.addfile(info, io.BytesIO(data))
@@ -123,6 +130,8 @@ Version needs section '.gnu.version_r' contains 1 entry:
             archive(b, b"source", b"two")
             self.assertEqual(abi_provenance.shared_source_digest(a), abi_provenance.shared_source_digest(b))
             archive(b, b"changed", b"one")
+            self.assertNotEqual(abi_provenance.shared_source_digest(a), abi_provenance.shared_source_digest(b))
+            archive(b, b"source", b"one", b"changed-stub")
             self.assertNotEqual(abi_provenance.shared_source_digest(a), abi_provenance.shared_source_digest(b))
 
     def test_build_provenance_binds_built_and_reused_outputs(self):

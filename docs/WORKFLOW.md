@@ -44,6 +44,9 @@ On distros that require the process-scoped SHA-1 override:
 OPENSSL_ENABLE_SHA1_SIGNATURES=1 python3 scripts/build_all.py --host qnx-build
 ```
 
+Developers without the BMW libraries can pass `--hmi-stubs` to build the plugin in the same VM. This mode is not
+yet qualified for vehicle deployment; it still needs the real BMW libraries on the head unit at runtime.
+
 3. Package from the exact QNX VM build directory printed above (preserves PEMs already in `installer/payload/rt`):
 ```sh
 python3 installer/make_payload.py --built build/qnx-build-<time>-<id>
@@ -54,6 +57,8 @@ Pass `--pem-dir .local/pem` on the first run before `installer/payload/rt` has t
 ```sh
 python3 installer/nbt_aa_installer.py --cli install --known-hosts <verified-known-hosts> --restart
 ```
+For a separately authorized test of an SDP stub-linked payload, the CLI additionally requires
+`--allow-qnx-hmi-stubs` (the GUI asks for confirmation).
 Files already on the head unit with the same content are not written again (`same` in the output). To write
 everything anyway, add `--force`. `--restart` runs `restart.sh` after verification so runtime-only updates
 (`native_service`, `nbt_android_auto`, etc.) take effect immediately without rebooting iDrive; if

@@ -19,7 +19,9 @@ Example:
 import argparse
 import hashlib
 import io
+import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -136,11 +138,37 @@ def add_nbt_aad(archive, checkout):
                 archive.add("reference/" + path.relative_to(work / "milestone-7").as_posix(), path.read_bytes())
 
 
+def hmi_stub_sources(contract):
+    filenames = {"libAppFramework.A.so": "app.c", "libCoreFramework.A.so": "core.c",
+                 "libcpp-ne.so.4": "cpp.c"}
+    stubs = contract.get("stubs") if isinstance(contract, dict) else None
+    if not isinstance(stubs, dict) or set(stubs) != set(filenames):
+        raise ValueError("HMI contract must specify exactly the three stub libraries")
+    sources, seen = {}, set()
+    for library, filename in filenames.items():
+        symbols = stubs[library]
+        if not isinstance(symbols, list) or not symbols or any(
+                not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol)
+                for symbol in symbols):
+            raise ValueError("Invalid HMI stub symbols for " + library)
+        if len(set(symbols)) != len(symbols) or seen.intersection(symbols):
+            raise ValueError("Duplicate HMI stub symbol in " + library)
+        seen.update(symbols)
+        sources[filename] = "".join("void %s(void) {}\n" % symbol for symbol in symbols).encode("ascii")
+    return sources
+
+
 def add_repo_sources(archive):
     for folder in ("src/android_auto", "src/idrive"):
         for path in sorted((ROOT / folder).rglob("*")):
+            if folder == "src/idrive" and path.relative_to(ROOT / folder).parts[:1] == ("hmi-stubs",):
+                continue
             if path.is_file() and path.suffix in (".c", ".cpp", ".h", ".hpp"):
                 archive.add(path.relative_to(ROOT).as_posix(), text(path))
+    contract = text(ROOT / "toolchain/hmi-stubs/contract.json")
+    for filename, source in hmi_stub_sources(json.loads(contract)).items():
+        archive.add("toolchain/hmi-stubs/" + filename, source)
+    archive.add("toolchain/hmi-stubs/contract.json", contract)
     archive.add("build-qnx.sh", text(ROOT / "scripts/build-qnx.sh"), 0o700)
 
 
@@ -175,9 +203,30 @@ class OpenSSH:
         return [self.scp, "-O", "-q", *options, source, destination]
 
 
-def fetch_programs(client, options, host, folder, programs, log):
+def hmi_link_mode(log, requested):
+    modes = re.findall(r"^QNX_HMI_LINK=(real|stubs|missing)\s*$", log, re.MULTILINE)
+    if len(modes) != 1 or modes[0] not in (("stubs",) if requested == "stubs" else ("real", "missing")):
+        raise SystemExit("VM reported missing or unexpected HMI link mode; expected " + requested)
+    return modes[0]
+
+
+def hmi_libs_assignment(path):
+    if path == "$HOME" or path.startswith("$HOME/"):
+        return ' HMI_LIBS="$HOME"' + shlex.quote(path[5:]) if path != "$HOME" else ' HMI_LIBS="$HOME"'
+    return " HMI_LIBS=" + shlex.quote(path)
+
+
+def write_provenance(out, toolchain, mode, build_id):
+    plugin = out / "programs" / "libNbtAndroidAuto.so"
+    digest = hashlib.sha256(plugin.read_bytes()).hexdigest() if plugin.is_file() else None
+    metadata = {"schema": 1, "toolchain": toolchain, "hmi_link": mode, "build_id": build_id,
+                "plugin_sha256": digest}
+    (out / "build-provenance.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+
+def fetch_programs(client, options, host, folder, programs, mode):
     for name in PROGRAMS:
-        if name == "libNbtAndroidAuto.so" and "SKIPPED: no libAppFramework.A.so" in log:
+        if name == "libNbtAndroidAuto.so" and mode == "missing":
             print("not built:", name)
             continue
         fetched = subprocess.run(client.copy(options, "%s:%s/out/%s" % (host, folder, name), programs / name),
@@ -204,8 +253,9 @@ def main():
     parser.add_argument("--identity", type=Path, help="ssh private key for the VM (if not set in the ssh config)")
     parser.add_argument("--nbt-aad", type=Path, default=ROOT / ".local/reference-nbt-aad",
                         help="NBT-AAD checkout at commit %s" % NBT_AAD_REVISION[:7])
-    parser.add_argument("--hmi-libs", default="$HOME/.nbt-build/hmi-libs",
-                        help="folder IN THE VM with libAppFramework.A.so and libCoreFramework.A.so from your NBT")
+    hmi = parser.add_mutually_exclusive_group()
+    hmi.add_argument("--hmi-libs", help="folder IN THE VM with libAppFramework.A.so and libCoreFramework.A.so")
+    hmi.add_argument("--hmi-stubs", action="store_true", help="link the HMI plugin against link-only BMW stubs")
     parser.add_argument("--compare", type=Path, help="installer payload folder to compare with (e.g. installer/payload)")
     args = parser.parse_args()
 
@@ -241,7 +291,11 @@ def main():
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         raise SystemExit("Upload failed; VM build directory retained at %s" % folder) from error
     print("building in the VM:", folder, flush=True)
-    result = remote("cd %s && tar xf source.tar && HMI_LIBS=%s sh build-qnx.sh" % (folder, args.hmi_libs), timeout=1800)
+    mode = "stubs" if args.hmi_stubs else "real"
+    hmi_libs = hmi_libs_assignment(args.hmi_libs or "$HOME/.nbt-build/hmi-libs") if mode == "real" else ""
+    require_real = " HMI_REQUIRE_REAL=1" if args.hmi_libs is not None else ""
+    result = remote("cd %s && tar xf source.tar && HMI_MODE=%s%s%s sh build-qnx.sh" %
+                    (folder, mode, hmi_libs, require_real), timeout=1800)
     log = result.stdout.decode(errors="replace")
     (out / "build.log").write_text(log, encoding="utf-8")
     print(log[log.find("== nbt_android_auto"):] if "== nbt_android_auto" in log else log[-3000:])
@@ -251,9 +305,10 @@ def main():
             print("VM cleanup failed for %s: %s" % (folder, cleaned.stdout.decode(errors="replace")), file=sys.stderr)
         raise SystemExit("VM build failed, full log: " + str(out / "build.log"))
 
+    actual_mode = hmi_link_mode(log, mode)
     programs = out / "programs"
     programs.mkdir()
-    fetch_programs(client, ssh, args.host, folder, programs, log)
+    fetch_programs(client, ssh, args.host, folder, programs, actual_mode)
     # every run made a new folder in the VM and nothing removed it: the VM disk filled up ("final link failed: Bad file
     # descriptor", user 2026-11-12). The programs are fetched now, so the folder goes.
     cleaned = remote("rm -rf " + folder)
@@ -264,8 +319,8 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
-    hmi_link = "real" if (programs / "libNbtAndroidAuto.so").is_file() else "missing"
-    write_inputs(out, inputs, reused=(), hmi_link=hmi_link)
+    write_provenance(out, "qnx-sdp", actual_mode, run_id)
+    write_inputs(out, inputs, reused=(), hmi_link=actual_mode)
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
     return 0

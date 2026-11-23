@@ -25,16 +25,16 @@ Result: `build/qnx-open` (about 80 MB, git-ignored). Run any tool with `toolchai
 ## Build the programs
 
 ```sh
-python3 scripts/build_open.py --reuse <installer payload folder>
+python3 scripts/build_open.py
 python3 installer/make_payload.py <version> --built build/open-build-<time>-<id> --pem-dir <payload>/rt
 ```
 
 `build_open.py` prepares the sources exactly like `build_all.py` (NBT-AAD at cd1d9f8, overlay, patches, Mbed TLS
-3.6.7). It then runs [`scripts/build-open.sh`](../scripts/build-open.sh), which uses the same flags as
-`build-qnx.sh`. The open build uses link-only HMI stubs for the plugin. One component is not built and must be
-taken from an existing payload with `--reuse`:
-
-- `accessory_window`: needs the QNX resource-manager headers, which this sysroot does not have.
+3.6.7). It then runs [`scripts/build-open.sh`](../scripts/build-open.sh). The open build uses link-only HMI stubs for
+the plugin by default; `--hmi-libs` selects real BMW frameworks. The default open build also includes
+`accessory_window` and the `nbt_key` and `nbt_a2i_beep` test tools. Resource-manager declarations are a limited,
+experimental subset. The beep diagnostic is not included in the installer payload and loads the car's
+`liba2i_client.so` at runtime.
 
 [`../flash-aa-open.sh`](../flash-aa-open.sh) builds only by default; `--install` or `--install-only` explicitly
 requests an **unsupported experimental** installation. Supported vehicle deployments must use binaries built in the
@@ -59,14 +59,14 @@ needed before considering the open toolchain for releases.
 ## Limits
 
 - Not run on the car yet. Test on the NBT before releasing.
-- The headers cover what this project uses. A new system API (resource manager, PPS, Screen, ...) needs its
+- The headers cover what this project uses. A new system API (PPS, Screen, ...) needs its
   declarations added in `sysroot/` and its symbols added to the stubs. Check new struct layouts against an
   SDP-built binary first.
 
 The default open build checks that every selected output is present and nonempty. `--programs` selects a
 space-separated subset; unknown names fail rather than producing a misleading success. Use
-`--output-dir build/<new-directory>` for a predictable output location; otherwise a unique directory is created. Without a reused
-`accessory_window`, the default build warns that its output is not a complete installer payload.
+`--output-dir build/<new-directory>` for a predictable output location; otherwise a unique directory is created.
+`--reuse` can supply compatible binaries omitted by a selective build, but never overrides a built output.
 
 CI checks the built binaries' ELF class and architecture and retains the experimental programs, resources, build log,
 SHA-256 hashes and `readelf` metadata as a workflow artifact for 14 days. The report supports comparison with an SDP
@@ -105,6 +105,62 @@ On Fedora, a VM whose SSH server only offers `ssh-rsa` may require prefixing thi
 the system-wide crypto policy.
 
 Evidence in `build/open-abi-probe-*` covers constructor/destructor execution, libc and thread-local `errno`, selected
-USB layouts and constants, iovec bytes, and `devctlv` lookup and its invalid-descriptor error path. It does not load
-the plugin, exercise USB hardware, start a vehicle service, or establish behavior on the car. VM files are retained
-on failure. `accessory_window` remains unsupported; the HMI and C++ runtime boundaries still need validation.
+USB and resource-manager layouts and constants, local-only resource-manager setup and dispatch timeouts, iovec bytes,
+`devctlv` lookup and its invalid-descriptor error path, and the plugin's spawn declarations and selected child process
+behavior. Local-only attachment registers no pathname and does not exercise the accessory-window path-denial or
+cleanup self-test. By default the probes do not load the plugin, exercise USB hardware, start a vehicle service, or
+establish behavior on the car. VM files are retained on failure.
+
+To additionally check all four **trusted** plugin builds, supply four clean, same-source build directories in this
+order:
+
+```sh
+python3 scripts/test_open_abi_vm.py --vm-address 192.168.56.101 --hmi-builds \
+  build/<open-real> build/<open-stubs> build/<sdp-real> build/<sdp-stubs>
+```
+
+The runner checks the recorded build modes, source provenance and plugin hashes, then loads and unloads each plugin
+twice with each compiler's loader probe. It checks plugin metadata against synthetic, abort-on-call framework
+libraries generated from the current contract. **Plugin initializers run**, so use only trusted builds on the isolated
+VM; the factory is never called. This is not a test of the real BMW libraries, HMI behavior, C++ ABI or vehicle
+compatibility. The local evidence directory contains copies of the supplied plugins and provenance: keep it private
+and do not publish it. The fixture libraries must never be installed.
+
+For the separate path-denial self-test, run the SDP-built and open-built `accessory_window` binaries **without
+arguments** as root on an isolated QNX VM. Each creates its own temporary files and checks expiry, SIGTERM and SIGKILL
+cleanup; a failure may leave its test directory under `/tmp`. Do not use the vehicle-window options for this test.
+Both builds passed this self-test on the available VM; this does not establish vehicle compatibility.
+
+## HMI link-only stubs
+
+### Build matrix
+
+| Compiler | BMW frameworks | Command | Status |
+|---|---|---|---|
+| QNX SDP VM | Real | `python3 scripts/build_all.py --hmi-libs '$HOME/.nbt-build/hmi-libs'` | Supported SDP build path; requires the real libraries in the VM. |
+| QNX SDP VM | Stubs | `python3 scripts/build_all.py --hmi-stubs` | Experimental; installer opt-in required. |
+| Open toolchain | Real | `python3 scripts/build_open.py --hmi-libs /path/to/hmi-libs` | Experimental; libraries are local to the host. |
+| Open toolchain | Stubs | `python3 scripts/build_open.py --hmi-stubs` | Experimental; also the default open mode. |
+
+Each real-framework directory must contain `libAppFramework.A.so` and `libCoreFramework.A.so` from your own NBT.
+The VM builder defaults to real libraries at `~/.nbt-build/hmi-libs` and skips the plugin if they are missing;
+an explicit `--hmi-libs` fails instead. The open builder mounts the selected local directory read-only and does not
+copy its libraries into the source archive or payload. Never publish proprietary libraries. The open builder still
+uses a link-only `libcpp-ne.so.4` stub in **both** modes; the VM builder uses the SDP C++ runtime.
+
+A `--programs` selection that excludes the plugin does not exercise any HMI link mode; its provenance reports
+`missing` or `reused`.
+All open builds and SDP stub builds remain unqualified for vehicle deployment, regardless of linking success.
+CI exercises the open real-framework code path with synthetic fixtures, not proprietary BMW libraries.
+Provenance records the selected mode; it does not authenticate the supplied libraries.
+
+Both the open build and the opt-in SDP stub build generate C sources from `toolchain/hmi-stubs/contract.json` on
+the host before preparing the source archive. These provide symbol names for the BMW framework and the open build's
+C++ link, but are never runtime libraries and must not be installed. CI checks the generated stub SONAMEs and exports,
+the open plugin's dependencies, imports and exports against the contract, and excludes stub files from build artifacts.
+The packaging test also checks that a stub in the build output is not included in the payload. CI removes one stub
+symbol in an isolated fixture and confirms that the plugin link fails.
+
+Review intentional changes to the symbol contract against the target and update the contract explicitly; do not
+regenerate it blindly from the build. Successful checks establish link-time consistency only, not C++ ABI or real HMI
+behavior. SDP and vehicle qualification remain separate.

@@ -8,6 +8,7 @@
 #   expected/            optional: binaries of an installer payload to compare against
 # Environment: HMI_LIBS = folder with libAppFramework.A.so and libCoreFramework.A.so copied from your own NBT
 #              (needed only for the HMI plugin; without it the plugin is skipped).
+#              HMI_MODE = stubs to build link-only BMW stubs, or real (default).
 # Output: out/ (the programs as they go into installer/payload/rt and plugin/).
 set -e
 QNX_HOST=/usr/qnx650/host/qnx6/x86
@@ -19,6 +20,8 @@ W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
 HMI_LIBS=${HMI_LIBS:-$HOME/.nbt-build/hmi-libs}
+HMI_MODE=${HMI_MODE:-real}
+HMI_REQUIRE_REAL=${HMI_REQUIRE_REAL:-0}
 CC="qcc -V4.4.2,gcc_ntox86"
 CXX="qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x"
 echo ABI_TOOLCHAIN_INFO_BEGIN
@@ -78,11 +81,29 @@ $CC -Wall $A/audio/nbt_a2i_beep.c -o $OUT/nbt_a2i_beep -lm
 
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
-if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so; then
+HMI_LINK_EXTRA=
+case "$HMI_MODE" in
+  stubs)
+    HMI_LIBS=$W/hmi-stubs
+    mkdir -p "$HMI_LIBS"
+    $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so "$W/toolchain/hmi-stubs/app.c" -o "$HMI_LIBS/libAppFramework.A.so"
+    $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so "$W/toolchain/hmi-stubs/core.c" -o "$HMI_LIBS/libCoreFramework.A.so"
+    # The real CoreFramework imports this libgcc helper; linking against it normally pulls the helper into the plugin.
+    HMI_LINK_EXTRA=-Wl,-u,__divdi3
+    ;;
+  real) ;;
+  *) echo "Invalid HMI_MODE: $HMI_MODE" >&2; exit 1 ;;
+esac
+if test -f "$HMI_LIBS/libAppFramework.A.so" -a -f "$HMI_LIBS/libCoreFramework.A.so"; then
   qcc -V4.4.2,gcc_ntox86_cpp-ne -O2 -Wall -Wextra -shared -fPIC -fno-exceptions -fno-rtti -Wl,-z,defs \
-    aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L$HMI_LIBS -lAppFramework.A -lCoreFramework.A
+    aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L"$HMI_LIBS" -lAppFramework.A -lCoreFramework.A $HMI_LINK_EXTRA
+  echo "QNX_HMI_LINK=$HMI_MODE"
 else
+  if test "$HMI_MODE" = stubs || test "$HMI_REQUIRE_REAL" = 1; then
+    echo "Missing required HMI libraries in $HMI_LIBS" >&2; exit 1
+  fi
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
+  echo "QNX_HMI_LINK=missing"
 fi
 
 echo "== nbt_reset (Restart system on the Android Auto page)"

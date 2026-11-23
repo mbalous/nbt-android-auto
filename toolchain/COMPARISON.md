@@ -44,12 +44,9 @@ File sizes are unstripped bytes from these particular builds, not performance or
 | `nbt_key` (test tool) | Not built | 49,333 |
 | `nbt_a2i_beep` (test tool) | Not built | 10,168 |
 
-`accessory_window` is required in the installer payload. It uses QNX resource-manager APIs to keep the stock USB stack
-from claiming the phone; the open sysroot lacks its `sys/dispatch.h` and `sys/iofunc.h` headers. This is a sysroot
-gap, not an inherent GCC limitation: adding compatible declarations and link symbols would also require checking
-structure layouts and behavior against the SDK. `build_open.py --reuse <payload>` can copy an existing binary, but a
-reused binary is not an open build and must match the intended release. The other two omitted programs are test tools,
-not payload entries. The open build generates plugin resources; packaging also requires the PEM inputs described in
+At the time of this comparison, `accessory_window` was not built by the open sysroot because its QNX resource-manager
+declarations were missing. The two other omitted programs are test tools, not payload entries. See the later
+resource-manager section below for current coverage. The open build generates plugin resources; packaging also requires the PEM inputs described in
 [DEVELOPMENT.md](../docs/DEVELOPMENT.md).
 
 ## Important differences
@@ -78,8 +75,7 @@ and `libc.so.3`. These are **SDP observations**, not verified properties of the 
    `DT_NEEDED`, symbol versions/imports/exports and plugin dependencies. Investigate differences rather than assuming
    matching names imply matching ABI. Compare the hand-written headers, struct layouts, constants, startup, spawn,
    `devctlv` and C++ runtime boundaries against SDP, especially for USB, HMI and DSI.
-3. Close the `accessory_window` gap, or explicitly maintain and validate an SDP-built component with traceable
-   provenance. Decide separately whether the omitted test tools need open builds.
+3. Extend the isolated `accessory_window` resource-manager checks beyond the VM self-test below.
 4. With appropriate target libraries and isolated, non-destructive test fixtures, run dedicated ABI/runtime probes and
    existing protocol tests on the QNX VM, comparing behavior with SDP. Do not start vehicle services or install anything
    on the car as part of this step. VM success alone does not establish NBT compatibility.
@@ -115,3 +111,36 @@ the dynamic `libcpp.so.4` dependency because they use static GNU libstdc++, and 
 plugin's exported `__divdi3` and differs in startup-related imports and relocations. These observations have not
 been established as equivalent at the HMI boundary. Inspect the generated comparison for the complete details;
 neither this build nor the probe authorizes deployment.
+
+## Four-path comparison and isolated HMI probe
+
+Four clean builds of revision `e2615fc973c42ef9945cb7422541df9bc9d2d3ba` used matching prepared-source digests and
+each built all 13 targets. The SDP real/stub program outputs were byte-identical; the open real/stub outputs differed
+only in the plugin. Matching source and symbol contracts do not establish equivalent runtime behavior.
+
+The paired VM probe matched the spawn `inheritance` layout, used flags and selected behavior: child process group,
+signal mask/default reset, and descriptor mapping. It does not cover every spawn option or all failure paths.
+Each of the four plugins was also loaded and unloaded twice by both SDP- and open-built loader probes against
+contract-generated, abort-on-call synthetic HMI libraries; the exported plugin metadata matched. Plugin
+initializers ran but the factory was not called. This does not test the real BMW frameworks or HMI/C++ interactions.
+
+The open plugin linked against real frameworks contains a local hidden `__divdi3` helper that the stub-linked plugin
+does not; SDP exports it globally. The real CoreFramework imports the helper, and VM libc exports it, but this
+observation alone does not establish vehicle behavior. Open and SDP plugins also differ in C++ startup/destructor
+imports and relocations. These differences remain unresolved until tested with the appropriate real runtime and HMI
+environment. Vehicle services, real USB, A2I audio and vehicle operation were not exercised.
+
+## Resource-manager and test-tool coverage
+
+The open sysroot now has a project-written, QNX 6.5 x86-only resource-manager subset, and the default open build
+includes `accessory_window`, `nbt_key` and `nbt_a2i_beep`. The paired VM layout probe compares the sizes, alignments,
+used member offsets and constants with SDP. On the available VM these matched, as did local-only resource-manager
+setup and repeated dispatch timeouts without registering a pathname. The open `nbt_key --invalid` and
+`nbt_a2i_beep` no-argument usage paths also ran without contacting vehicle services. Neither MOST interaction nor
+A2I audio output was exercised.
+
+The normal VM user could not attach the self-test's temporary resource-manager paths: `resmgr_attach` returned
+`EPERM` for both the SDP and open `accessory_window` builds. When run as root on the isolated VM, both binaries
+passed their no-argument self-tests: six temporary paths were denied while leased and the original files were
+preserved after expiry, SIGTERM and SIGKILL. This exercises the self-test fixtures only; it does not establish
+resource-manager equivalence in every scenario or vehicle compatibility.

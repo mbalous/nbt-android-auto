@@ -22,6 +22,9 @@ def parse_readelf(text):
         headers[key.lower()] = match.group(1).strip()
     interpreter = re.search(r"\[Requesting program interpreter:\s*(.*?)\]", text)
     needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", text)
+    sonames = re.findall(r"\(SONAME\).*?\[([^]]+)\]", text)
+    if len(sonames) > 1:
+        raise ValueError("ELF has multiple SONAME entries")
     search_paths = [{"tag": tag, "value": value} for tag, value in
                     re.findall(r"\((RPATH|RUNPATH)\).*?\[([^]]*)\]", text)]
     imports, exports, sizes = [], [], {}
@@ -90,6 +93,7 @@ def parse_readelf(text):
             elif parent and definitions:
                 definitions[-1]["parents"].append(parent.group(1))
     return {**headers, "interpreter": interpreter.group(1) if interpreter else None, "needed": needed,
+            "soname": sonames[0] if sonames else None,
             "search_paths": search_paths, "imports": sorted(imports, key=key), "exports": sorted(exports, key=key),
             "version_needs": sorted(versions, key=key), "version_definitions": sorted(definitions, key=key),
             "relocations": normalized_relocs}

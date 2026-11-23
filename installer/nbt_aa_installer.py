@@ -22,6 +22,7 @@ import io
 import json
 import os
 import queue
+import re
 import socket
 import sys
 import threading
@@ -71,6 +72,45 @@ def tr(key):
 
 class InstallError(Exception):
     pass
+
+
+def validate_provenance(provenance, plugin_data):
+    keys = {'schema', 'toolchain', 'hmi_link', 'build_id', 'plugin_sha256'}
+    if not isinstance(provenance, dict) or set(provenance) != keys or \
+            type(provenance['schema']) is not int or provenance['schema'] != 1:
+        raise InstallError('Invalid or unsupported build provenance')
+    modes = {'qnx-sdp': ('real', 'stubs', 'missing'),
+             'open-experimental': ('real', 'stubs', 'reused', 'missing')}
+    toolchain, mode = provenance['toolchain'], provenance['hmi_link']
+    if not isinstance(toolchain, str) or not isinstance(mode, str) or \
+            toolchain not in modes or mode not in modes[toolchain] or \
+            not isinstance(provenance['build_id'], str) or not provenance['build_id'].strip():
+        raise InstallError('Invalid build provenance fields')
+    digest = provenance['plugin_sha256']
+    if mode == 'missing':
+        if digest is not None or plugin_data is not None:
+            raise InstallError('Build provenance does not match the HMI plugin')
+    elif not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest) or \
+            not plugin_data or hashlib.sha256(plugin_data).hexdigest() != digest:
+        raise InstallError('Build provenance does not match the HMI plugin')
+    return provenance
+
+
+def is_qnx_hmi_stub(manifest):
+    provenance = manifest.get('build_provenance')
+    return bool(provenance and provenance['toolchain'] == 'qnx-sdp' and provenance['hmi_link'] == 'stubs')
+
+
+def check_install_allowed(manifest, allow_qnx_hmi_stubs=False):
+    if is_qnx_hmi_stub(manifest) and not allow_qnx_hmi_stubs:
+        raise InstallError('QNX SDP HMI stub-linked payload requires --allow-qnx-hmi-stubs or GUI confirmation')
+
+
+def confirm_gui_install(manifest, confirm):
+    if is_qnx_hmi_stub(manifest):
+        return confirm('This QNX SDP payload uses HMI link stubs. '
+                       'Vehicle compatibility is not established by the build. Install anyway?')
+    return True
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -198,12 +238,22 @@ def load_manifest():
     manifest_path = directory / 'manifest.json'
     if not manifest_path.exists():
         raise InstallError('Payload missing: ' + str(manifest_path))
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    for entry in manifest['files']:
-        data = (directory / entry['source']).read_bytes()
-        if hashlib.sha256(data).hexdigest() != entry['sha256']:
-            raise InstallError('Payload damaged: ' + entry['source'])
-        entry['data'] = data
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        if not isinstance(manifest, dict) or not isinstance(manifest.get('files'), list):
+            raise InstallError('Invalid payload manifest')
+        for entry in manifest['files']:
+            data = (directory / entry['source']).read_bytes()
+            if hashlib.sha256(data).hexdigest() != entry['sha256']:
+                raise InstallError('Payload damaged: ' + entry['source'])
+            entry['data'] = data
+        if 'build_provenance' in manifest:
+            plugins = [entry for entry in manifest['files'] if entry['source'] == 'plugin/libNbtAndroidAuto.so']
+            if len(plugins) != 1 or plugins[0]['target'] != PLUGIN_DIR + '/libNbtAndroidAuto.so':
+                raise InstallError('Build provenance requires exactly one HMI plugin at its expected target')
+            validate_provenance(manifest['build_provenance'], plugins[0]['data'])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise InstallError('Invalid payload manifest or files: %s' % exc) from exc
     return manifest
 
 
@@ -234,9 +284,14 @@ def preflight(nbt, log, root):
         raise InstallError('The HMI data directory is read-only.')
 
 
-def install(nbt, log, root='', force=False, restart=False):
+def install(nbt, log, root='', force=False, restart=False, allow_qnx_hmi_stubs=False):
     manifest = load_manifest()
+    check_install_allowed(manifest, allow_qnx_hmi_stubs)
     log('Package %s, %d files' % (manifest.get('version', '?'), len(manifest['files'])))
+    if 'build_provenance' in manifest:
+        provenance = manifest['build_provenance']
+        log('Build: %s, HMI link: %s (%s)' %
+            (provenance['toolchain'], provenance['hmi_link'], provenance['build_id']))
     preflight(nbt, log, root)
     nbt.run("chmod 700 '%s'" % (root + RT_DIR))
     # the manifest of the plugin goes last: the HMI must never see a half package
@@ -323,6 +378,8 @@ ACTIONS = {'install': install, 'uninstall': uninstall}
 
 # --------------------------------------------------------------------------------------------------------------------
 def run_cli(args):
+    if args.cli == 'install':
+        check_install_allowed(load_manifest(), args.allow_qnx_hmi_stubs)
     if paramiko is None:
         sys.exit(tr('no_paramiko'))
     password = None if args.key else getpass.getpass('%s %s@%s: ' % (tr('password'), args.user, args.host))
@@ -334,7 +391,8 @@ def run_cli(args):
                       args.root)
         else:
             if args.cli == 'install':
-                install(nbt, print, args.root, force=args.force, restart=args.restart)
+                install(nbt, print, args.root, force=args.force, restart=args.restart,
+                        allow_qnx_hmi_stubs=args.allow_qnx_hmi_stubs)
             else:
                 ACTIONS[args.cli](nbt, print, args.root)
     finally:
@@ -384,6 +442,17 @@ def run_gui(args):
         root.after(100, pump)
 
     def start(action, extra=None):
+        allow_stubs = False
+        if action == 'install':
+            try:
+                manifest = load_manifest()
+                if not confirm_gui_install(manifest, lambda text: messagebox.askyesno(APP_NAME, text)):
+                    return
+                allow_stubs = is_qnx_hmi_stub(manifest)
+                check_install_allowed(manifest, allow_stubs)
+            except (InstallError, OSError, ValueError, KeyError) as exc:
+                messagebox.showerror(tr('error'), str(exc))
+                return
         if paramiko is None:
             messagebox.showerror(tr('error'), tr('no_paramiko'))
             return
@@ -405,7 +474,10 @@ def run_gui(args):
                 if action == 'logs':
                     save_logs(nbt, log, extra, args.root)
                 else:
-                    ACTIONS[action](nbt, log, args.root)
+                    if action == 'install':
+                        install(nbt, log, args.root, allow_qnx_hmi_stubs=allow_stubs)
+                    else:
+                        ACTIONS[action](nbt, log, args.root)
             except InstallError as exc:
                 log('%s: %s' % (tr('error'), exc))
             except Exception as exc:  # unexpected: show it instead of dying silently
@@ -453,6 +525,8 @@ def main():
     parser.add_argument('--force', action='store_true', help='install: write every file, also the unchanged ones')
     parser.add_argument('--restart', action='store_true',
                         help='install: run restart.sh after verifying so runtime updates take effect immediately')
+    parser.add_argument('--allow-qnx-hmi-stubs', action='store_true',
+                        help='install: explicitly allow a QNX SDP HMI stub-linked payload')
     parser.add_argument('--known-hosts', help='verify the SSH host key against this known_hosts file')
     # development only: key login and installing below a test directory (e.g. in a QNX build VM)
     parser.add_argument('--key', help=argparse.SUPPRESS)

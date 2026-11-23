@@ -10,7 +10,8 @@ T=i486-pc-nto-qnx6.5.0
 W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
-PROGRAMS=${PROGRAMS:-"nbt_android_auto native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn nbt_reset libNbtAndroidAuto.so"}
+PROGRAMS=${PROGRAMS:-"nbt_android_auto native_service decode_runner fifo_http accessory_window nbt_knob nbt_hwvideo nbt_cluster audioconn nbt_key nbt_a2i_beep nbt_reset libNbtAndroidAuto.so"}
+HMI_MODE=${HMI_MODE:-stubs}
 CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
 LIBS="-lqnxopen"
@@ -55,43 +56,38 @@ if want native_service; then echo "== native_service"; $CC -O2 -Wall -Wextra nbt
 if want decode_runner; then echo "== decode_runner"; $CXX -O2 -Wextra -DNBT_OPEN_TOOLCHAIN nbt_decode_runner.cpp $LIBS -o $OUT/decode_runner; fi
 if want fifo_http; then echo "== fifo_http"; $CXX -O0 -Wextra nbt_fifo_http.cpp -lsocket $LIBS -o $OUT/fifo_http; fi
 if want accessory_window; then echo "== accessory_window"; $CC -Wall -Wextra accessory_window.c $LIBS -o $OUT/accessory_window; fi
+if want nbt_a2i_beep; then echo "== nbt_a2i_beep"; $CC -Wall audio/nbt_a2i_beep.c -lm $LIBS -o $OUT/nbt_a2i_beep; fi
 cd $A/knob
 if want nbt_knob; then echo "== nbt_knob"; $CXX -Iref nbt_knob.cpp ref/dsi_client.cpp ref/most/client.cpp ref/car/ccs_input.cpp $LIBS -o $OUT/nbt_knob; fi
 if want nbt_hwvideo; then echo "== nbt_hwvideo"; $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/nbt_hwvideo; fi
 if want nbt_cluster; then echo "== nbt_cluster"; $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -lm $LIBS -o $OUT/nbt_cluster; fi
 if want audioconn; then echo "== audioconn"; $CXX -Iref nbt_audioconn.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/audioconn; fi
+if want nbt_key; then echo "== nbt_key"; $CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/nbt_key; fi
 cd $W
 if want nbt_reset; then echo "== nbt_reset"; $CC -O2 -Wall -Wextra src/idrive/reboot/nbt_reset.c -lsocket $LIBS -o $OUT/nbt_reset; fi
-# HMI plugin libNbtAndroidAuto.so, without the NBT's HMI libraries: it is linked against STUB libraries that only carry
-# the names (SONAME) and the symbols it imports (libAppFramework.A.so, libCoreFramework.A.so, Dinkum libcpp-ne.so.4).
-# The result has the same NEEDED list as the SDP-built plugin, so on the car HmiMain3D's real libraries resolve every
-# symbol; nothing of the stubs is ever loaded. -z defs: any import missing from the stubs fails the build.
+# The open C++ runtime link always uses a link-only libcpp-ne stub, even with real BMW frameworks.
 if want libNbtAndroidAuto.so; then
-  echo "== HMI plugin libNbtAndroidAuto.so (stub-linked)"
+  echo "== HMI plugin libNbtAndroidAuto.so ($HMI_MODE)"
   S=$W/hmi-stubs
-  mkdir -p $S
-  cat > $S/app.c <<'EOS'
-void _ZN3bmw11BasicStringIcEC1EPKc(void) {}
-void _ZN3bmw11BasicStringIcED1Ev(void) {}
-void _ZN3bmw9PluginApp10addHandlerEjjRKNS_8DelegateIbRKNS_6ParcelEvvvEE(void) {}
-void _ZN3bmw9PluginApp11updateModelEjRKNS_6TextIDE(void) {}
-void _ZN3bmw9PluginApp11updateModelEji(void) {}
-void _ZN3bmw9PluginApp5startEv(void) {}
-void _ZN3bmw9PluginApp12triggerEventEj(void) {}
-void _ZN3bmw9PluginApp4postEPNS_8RunnableEj(void) {}
-void _ZN3bmw9PluginAppC1ERNS_11IDispatcherENS_11BasicStringIcEERKNS_6BundleES7_(void) {}
-void _ZN3bmw9PluginAppD1Ev(void) {}
-void _ZNK3bmw6Parcel8readBoolERb(void) {}
-void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
-EOS
-  echo 'void _ZN3bmw6TextIDC1Ej(void) {}' > $S/core.c
-  printf 'void _Znwj(void) {}\nvoid _ZdlPv(void) {}\nvoid __cxa_pure_virtual(void) {}\n' > $S/cpp.c
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so $S/app.c -o $S/libAppFramework.A.so
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so $S/core.c -o $S/libCoreFramework.A.so
-  $CC -shared -fPIC -nostdlib -Wl,-soname,libcpp-ne.so.4 $S/cpp.c -o $S/libcpp-ne.so.4
+  mkdir -p "$S"
+  case "$HMI_MODE" in
+    stubs)
+      HMI_FRAMEWORK_LIBS=$S
+      $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so "$W/toolchain/hmi-stubs/app.c" -o "$S/libAppFramework.A.so"
+      $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so "$W/toolchain/hmi-stubs/core.c" -o "$S/libCoreFramework.A.so"
+      ;;
+    real)
+      HMI_FRAMEWORK_LIBS=${HMI_LIBS:?HMI_LIBS is required in real mode}
+      for name in libAppFramework.A.so libCoreFramework.A.so; do
+        test -s "$HMI_FRAMEWORK_LIBS/$name" || { echo "Missing real HMI library: $name" >&2; exit 1; }
+      done
+      ;;
+    *) echo "Invalid HMI_MODE: $HMI_MODE" >&2; exit 1 ;;
+  esac
+  $CC -shared -fPIC -nostdlib -Wl,-soname,libcpp-ne.so.4 "$W/toolchain/hmi-stubs/cpp.c" -o "$S/libcpp-ne.so.4"
   cd $W/src/idrive
   $T-g++ -O2 -Wall -Wextra -D_QNX_SOURCE -DNBT_OPEN_TOOLCHAIN -shared -fPIC -fno-exceptions -fno-rtti -nodefaultlibs -Wl,-z,defs \
-    aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L$S -lAppFramework.A -lCoreFramework.A $S/libcpp-ne.so.4 -lc -lgcc
+    aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L"$HMI_FRAMEWORK_LIBS" -lAppFramework.A -lCoreFramework.A "$S/libcpp-ne.so.4" -lc -lgcc
   cd $W
 fi
 echo "== built"
