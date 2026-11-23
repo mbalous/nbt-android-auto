@@ -91,16 +91,40 @@ class QnxBuildTests(unittest.TestCase):
             self.assertEqual(record["hmi_link"], "stubs")
             self.assertEqual(record["plugin_sha256"], hashlib.sha256(b"plugin").hexdigest())
 
-    def test_build_archive_includes_both_shared_stub_sources(self):
+    def test_build_archive_generates_stub_sources_from_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sources.tar"
             archive = build_all.Archive(path)
             build_all.add_repo_sources(archive)
             archive.close()
             with tarfile.open(path) as tar:
-                for name in ("app.c", "core.c", "cpp.c"):
-                    self.assertIn("toolchain/hmi-stubs/" + name, tar.getnames())
+                contract = json.load(tar.extractfile("toolchain/hmi-stubs/contract.json"))
+                for name, source in build_all.hmi_stub_sources(contract).items():
+                    self.assertEqual(tar.extractfile("toolchain/hmi-stubs/" + name).read(), source)
                 self.assertNotIn("src/idrive/hmi-stubs/app.c", tar.getnames())
+
+    def test_hmi_generator_tracks_contract_changes_and_rejects_bad_symbols(self):
+        path = build_all.ROOT / "toolchain/hmi-stubs/contract.json"
+        contract = json.loads(path.read_text())
+        original = build_all.hmi_stub_sources(contract)
+        symbols = contract["stubs"]["libAppFramework.A.so"]
+        symbols.append("_ZN3bmw7newStubEv")
+        generated = build_all.hmi_stub_sources(contract)
+        self.assertIn(b"void _ZN3bmw7newStubEv(void) {}\n", generated["app.c"])
+        self.assertNotEqual(original["app.c"], generated["app.c"])
+        for invalid in ("not-a-c-identifier", symbols[0]):
+            with self.subTest(invalid=invalid):
+                symbols[-1] = invalid
+                with self.assertRaises(ValueError):
+                    build_all.hmi_stub_sources(contract)
+        symbols[-1] = contract["stubs"]["libCoreFramework.A.so"][0]
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            build_all.hmi_stub_sources(contract)
+        del contract["stubs"]["libAppFramework.A.so"]
+        with self.assertRaisesRegex(ValueError, "three stub libraries"):
+            build_all.hmi_stub_sources(contract)
+        with self.assertRaisesRegex(ValueError, "three stub libraries"):
+            build_all.hmi_stub_sources(None)
 
     def test_stub_compiler_failure_does_not_skip_plugin_or_fall_back(self):
         script = (build_all.ROOT / "scripts/build-qnx.sh").read_text()

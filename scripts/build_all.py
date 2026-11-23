@@ -138,13 +138,37 @@ def add_nbt_aad(archive, checkout):
                 archive.add("reference/" + path.relative_to(work / "milestone-7").as_posix(), path.read_bytes())
 
 
+def hmi_stub_sources(contract):
+    filenames = {"libAppFramework.A.so": "app.c", "libCoreFramework.A.so": "core.c",
+                 "libcpp-ne.so.4": "cpp.c"}
+    stubs = contract.get("stubs") if isinstance(contract, dict) else None
+    if not isinstance(stubs, dict) or set(stubs) != set(filenames):
+        raise ValueError("HMI contract must specify exactly the three stub libraries")
+    sources, seen = {}, set()
+    for library, filename in filenames.items():
+        symbols = stubs[library]
+        if not isinstance(symbols, list) or not symbols or any(
+                not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol)
+                for symbol in symbols):
+            raise ValueError("Invalid HMI stub symbols for " + library)
+        if len(set(symbols)) != len(symbols) or seen.intersection(symbols):
+            raise ValueError("Duplicate HMI stub symbol in " + library)
+        seen.update(symbols)
+        sources[filename] = "".join("void %s(void) {}\n" % symbol for symbol in symbols).encode("ascii")
+    return sources
+
+
 def add_repo_sources(archive):
-    for folder in ("src/android_auto", "src/idrive", "toolchain/hmi-stubs"):
+    for folder in ("src/android_auto", "src/idrive"):
         for path in sorted((ROOT / folder).rglob("*")):
             if folder == "src/idrive" and path.relative_to(ROOT / folder).parts[:1] == ("hmi-stubs",):
                 continue
             if path.is_file() and path.suffix in (".c", ".cpp", ".h", ".hpp"):
                 archive.add(path.relative_to(ROOT).as_posix(), text(path))
+    contract = text(ROOT / "toolchain/hmi-stubs/contract.json")
+    for filename, source in hmi_stub_sources(json.loads(contract)).items():
+        archive.add("toolchain/hmi-stubs/" + filename, source)
+    archive.add("toolchain/hmi-stubs/contract.json", contract)
     archive.add("build-qnx.sh", text(ROOT / "scripts/build-qnx.sh"), 0o700)
 
 
