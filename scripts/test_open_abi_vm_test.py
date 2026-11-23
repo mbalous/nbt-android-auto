@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -68,6 +69,12 @@ class HmiProbeTests(unittest.TestCase):
             subprocess.run(["cc", "-x", "c", "-o", str(executable), "-"], input=source, check=True)
             result = subprocess.run([str(executable)], cwd=self.tmp.name, capture_output=True)
             self.assertEqual(result.returncode, -signal.SIGABRT)
+
+    def test_real_vm_libraries_require_four_builds(self):
+        result = subprocess.run([sys.executable, str(Path(probe.__file__)), "--vm-address",
+                                 "192.168.56.101", "--hmi-real-vm"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--hmi-real-vm requires --hmi-builds", result.stderr)
 
 
 if __name__ == "__main__":
