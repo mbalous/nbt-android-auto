@@ -32,7 +32,9 @@ python3 installer/make_payload.py <version> --built build/open-build-<time>-<id>
 `build_open.py` prepares the sources exactly like `build_all.py` (NBT-AAD at cd1d9f8, overlay, patches, Mbed TLS
 3.6.7). It then runs [`scripts/build-open.sh`](../scripts/build-open.sh). The open build uses link-only HMI stubs for
 the plugin by default; `--hmi-libs` selects real BMW frameworks. The default open build also includes
-`accessory_window` and the `nbt_key` test tool. Resource-manager declarations are a limited, experimental subset.
+`accessory_window` and the `nbt_key` and `nbt_a2i_beep` test tools. Resource-manager declarations are a limited,
+experimental subset. The beep diagnostic is not included in the installer payload and loads the car's
+`liba2i_client.so` at runtime.
 
 [`../flash-aa-open.sh`](../flash-aa-open.sh) builds only by default; `--install` or `--install-only` explicitly
 requests an **unsupported experimental** installation. Supported vehicle deployments must use binaries built in the

@@ -15,6 +15,8 @@ class OpenBuildTests(unittest.TestCase):
                          ("native_service", "nbt_reset"))
         self.assertIn("accessory_window", build_open.select_programs(None))
         self.assertIn("nbt_key", build_open.select_programs(None))
+        self.assertIn("nbt_a2i_beep", build_open.select_programs(None))
+        self.assertEqual(build_open.select_programs("nbt_a2i_beep"), ("nbt_a2i_beep",))
 
     def test_rejects_empty_or_unknown_program_selection(self):
         for value in ("  ", "native_service typo"):

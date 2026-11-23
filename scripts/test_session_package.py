@@ -53,6 +53,7 @@ class SessionPackageTests(unittest.TestCase):
                     source.write_bytes(b"fixture")
 
             (built / "programs/libAppFramework.A.so").write_bytes(b"link-only-stub")
+            (built / "programs/nbt_a2i_beep").write_bytes(b"diagnostic")
             build_all.write_provenance(built, "qnx-sdp", "real", "test-build")
             with mock.patch.object(payload, "OUT", out), mock.patch(
                     "sys.argv", ["make_payload.py", "test", "--built", str(built), "--pem-dir", str(pem_dir)]):
@@ -60,6 +61,7 @@ class SessionPackageTests(unittest.TestCase):
 
             manifest = json.loads((out / "manifest.json").read_text())
             self.assertFalse(any(path.name == "libAppFramework.A.so" for path in out.rglob("*")))
+            self.assertFalse(any(path.name == "nbt_a2i_beep" for path in out.rglob("*")))
             self.assertEqual(manifest["build_provenance"]["hmi_link"], "real")
             session = next(item for item in manifest["files"] if item["source"] == "rt/nbt_android_auto")
             executable = Path(session["source"]).name

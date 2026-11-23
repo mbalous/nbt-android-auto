@@ -57,7 +57,7 @@ Version needs section '.gnu.version_r' contains 1 entry:
             self.assertIn("native_service", report["programs"])
             self.assertEqual(report["missing"]["accessory_window"], "not-present")
             self.assertEqual(report["missing"]["nbt_key"], "not-present")
-            self.assertEqual(report["missing"]["nbt_a2i_beep"], "unsupported")
+            self.assertEqual(report["missing"]["nbt_a2i_beep"], "not-present")
             self.assertTrue(any("puts" in symbol["name"] for symbol in
                                 report["programs"]["native_service"]["elf"]["imports"]))
             binary.write_bytes(b"not an ELF")

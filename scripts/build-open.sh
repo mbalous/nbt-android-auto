@@ -10,7 +10,7 @@ T=i486-pc-nto-qnx6.5.0
 W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
-PROGRAMS=${PROGRAMS:-"nbt_android_auto native_service decode_runner fifo_http accessory_window nbt_knob nbt_hwvideo nbt_cluster audioconn nbt_key nbt_reset libNbtAndroidAuto.so"}
+PROGRAMS=${PROGRAMS:-"nbt_android_auto native_service decode_runner fifo_http accessory_window nbt_knob nbt_hwvideo nbt_cluster audioconn nbt_key nbt_a2i_beep nbt_reset libNbtAndroidAuto.so"}
 HMI_MODE=${HMI_MODE:-stubs}
 CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
@@ -56,6 +56,7 @@ if want native_service; then echo "== native_service"; $CC -O2 -Wall -Wextra nbt
 if want decode_runner; then echo "== decode_runner"; $CXX -O2 -Wextra -DNBT_OPEN_TOOLCHAIN nbt_decode_runner.cpp $LIBS -o $OUT/decode_runner; fi
 if want fifo_http; then echo "== fifo_http"; $CXX -O0 -Wextra nbt_fifo_http.cpp -lsocket $LIBS -o $OUT/fifo_http; fi
 if want accessory_window; then echo "== accessory_window"; $CC -Wall -Wextra accessory_window.c $LIBS -o $OUT/accessory_window; fi
+if want nbt_a2i_beep; then echo "== nbt_a2i_beep"; $CC -Wall audio/nbt_a2i_beep.c -lm $LIBS -o $OUT/nbt_a2i_beep; fi
 cd $A/knob
 if want nbt_knob; then echo "== nbt_knob"; $CXX -Iref nbt_knob.cpp ref/dsi_client.cpp ref/most/client.cpp ref/car/ccs_input.cpp $LIBS -o $OUT/nbt_knob; fi
 if want nbt_hwvideo; then echo "== nbt_hwvideo"; $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/nbt_hwvideo; fi

@@ -75,8 +75,7 @@ and `libc.so.3`. These are **SDP observations**, not verified properties of the 
    `DT_NEEDED`, symbol versions/imports/exports and plugin dependencies. Investigate differences rather than assuming
    matching names imply matching ABI. Compare the hand-written headers, struct layouts, constants, startup, spawn,
    `devctlv` and C++ runtime boundaries against SDP, especially for USB, HMI and DSI.
-3. Extend the isolated `accessory_window` resource-manager checks beyond the VM self-test below. Decide separately
-   whether the remaining omitted test tool needs an open build.
+3. Extend the isolated `accessory_window` resource-manager checks beyond the VM self-test below.
 4. With appropriate target libraries and isolated, non-destructive test fixtures, run dedicated ABI/runtime probes and
    existing protocol tests on the QNX VM, comparing behavior with SDP. Do not start vehicle services or install anything
    on the car as part of this step. VM success alone does not establish NBT compatibility.
@@ -116,10 +115,11 @@ neither this build nor the probe authorizes deployment.
 ## Resource-manager and test-tool coverage
 
 The open sysroot now has a project-written, QNX 6.5 x86-only resource-manager subset, and the default open build
-includes `accessory_window` and `nbt_key`. The paired VM layout probe compares the sizes, alignments, used member
-offsets and constants with SDP. On the available VM these matched, as did local-only resource-manager setup and
-repeated dispatch timeouts without registering a pathname. The open `nbt_key --invalid` usage path also ran without
-contacting vehicle services. No MOST interaction was exercised.
+includes `accessory_window`, `nbt_key` and `nbt_a2i_beep`. The paired VM layout probe compares the sizes, alignments,
+used member offsets and constants with SDP. On the available VM these matched, as did local-only resource-manager
+setup and repeated dispatch timeouts without registering a pathname. The open `nbt_key --invalid` and
+`nbt_a2i_beep` no-argument usage paths also ran without contacting vehicle services. Neither MOST interaction nor
+A2I audio output was exercised.
 
 The normal VM user could not attach the self-test's temporary resource-manager paths: `resmgr_attach` returned
 `EPERM` for both the SDP and open `accessory_window` builds. When run as root on the isolated VM, both binaries

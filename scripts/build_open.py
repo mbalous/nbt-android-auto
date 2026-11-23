@@ -29,7 +29,8 @@ from build_all import (MBEDTLS_SHA256, NBT_AAD_REVISION, PROGRAMS, ROOT, Archive
                        write_provenance)  # noqa: E402
 
 OPEN_PROGRAMS = ("nbt_android_auto", "native_service", "decode_runner", "fifo_http", "accessory_window", "nbt_knob",
-                 "nbt_hwvideo", "nbt_cluster", "audioconn", "nbt_key", "nbt_reset", "libNbtAndroidAuto.so")
+                 "nbt_hwvideo", "nbt_cluster", "audioconn", "nbt_key", "nbt_a2i_beep", "nbt_reset",
+                 "libNbtAndroidAuto.so")
 HMI_LIBRARIES = ("libAppFramework.A.so", "libCoreFramework.A.so")
 
 
