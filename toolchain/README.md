@@ -106,10 +106,25 @@ the system-wide crypto policy.
 
 Evidence in `build/open-abi-probe-*` covers constructor/destructor execution, libc and thread-local `errno`, selected
 USB and resource-manager layouts and constants, local-only resource-manager setup and dispatch timeouts, iovec bytes,
-and `devctlv` lookup and its invalid-descriptor error path. Local-only attachment registers no pathname and does not
-exercise the accessory-window path-denial or cleanup self-test. The probes do not load the plugin, exercise USB
-hardware, start a vehicle service, or establish behavior on the car. VM files are retained on failure. The HMI, C++
-runtime and resource-manager behavior boundaries still need validation.
+`devctlv` lookup and its invalid-descriptor error path, and the plugin's spawn declarations and selected child process
+behavior. Local-only attachment registers no pathname and does not exercise the accessory-window path-denial or
+cleanup self-test. By default the probes do not load the plugin, exercise USB hardware, start a vehicle service, or
+establish behavior on the car. VM files are retained on failure.
+
+To additionally check all four **trusted** plugin builds, supply four clean, same-source build directories in this
+order:
+
+```sh
+python3 scripts/test_open_abi_vm.py --vm-address 192.168.56.101 --hmi-builds \
+  build/<open-real> build/<open-stubs> build/<sdp-real> build/<sdp-stubs>
+```
+
+The runner checks the recorded build modes, source provenance and plugin hashes, then loads and unloads each plugin
+twice with each compiler's loader probe. It checks plugin metadata against synthetic, abort-on-call framework
+libraries generated from the current contract. **Plugin initializers run**, so use only trusted builds on the isolated
+VM; the factory is never called. This is not a test of the real BMW libraries, HMI behavior, C++ ABI or vehicle
+compatibility. The local evidence directory contains copies of the supplied plugins and provenance: keep it private
+and do not publish it. The fixture libraries must never be installed.
 
 For the separate path-denial self-test, run the SDP-built and open-built `accessory_window` binaries **without
 arguments** as root on an isolated QNX VM. Each creates its own temporary files and checks expiry, SIGTERM and SIGKILL

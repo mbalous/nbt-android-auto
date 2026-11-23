@@ -112,6 +112,24 @@ plugin's exported `__divdi3` and differs in startup-related imports and relocati
 been established as equivalent at the HMI boundary. Inspect the generated comparison for the complete details;
 neither this build nor the probe authorizes deployment.
 
+## Four-path comparison and isolated HMI probe
+
+Four clean builds of revision `e2615fc973c42ef9945cb7422541df9bc9d2d3ba` used matching prepared-source digests and
+each built all 13 targets. The SDP real/stub program outputs were byte-identical; the open real/stub outputs differed
+only in the plugin. Matching source and symbol contracts do not establish equivalent runtime behavior.
+
+The paired VM probe matched the spawn `inheritance` layout, used flags and selected behavior: child process group,
+signal mask/default reset, and descriptor mapping. It does not cover every spawn option or all failure paths.
+Each of the four plugins was also loaded and unloaded twice by both SDP- and open-built loader probes against
+contract-generated, abort-on-call synthetic HMI libraries; the exported plugin metadata matched. Plugin
+initializers ran but the factory was not called. This does not test the real BMW frameworks or HMI/C++ interactions.
+
+The open plugin linked against real frameworks contains a local hidden `__divdi3` helper that the stub-linked plugin
+does not; SDP exports it globally. The real CoreFramework imports the helper, and VM libc exports it, but this
+observation alone does not establish vehicle behavior. Open and SDP plugins also differ in C++ startup/destructor
+imports and relocations. These differences remain unresolved until tested with the appropriate real runtime and HMI
+environment. Vehicle services, real USB, A2I audio and vehicle operation were not exercised.
+
 ## Resource-manager and test-tool coverage
 
 The open sysroot now has a project-written, QNX 6.5 x86-only resource-manager subset, and the default open build
