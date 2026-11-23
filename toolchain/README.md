@@ -103,10 +103,11 @@ On Fedora, a VM whose SSH server only offers `ssh-rsa` may require prefixing thi
 the system-wide crypto policy.
 
 Evidence in `build/open-abi-probe-*` covers constructor/destructor execution, libc and thread-local `errno`, selected
-USB and resource-manager layouts and constants, iovec bytes, and `devctlv` lookup and its invalid-descriptor error
-path. It does not exercise resource-manager path attachment, load the plugin, exercise USB hardware, start a vehicle
-service, or establish behavior on the car. VM files are retained on failure. The HMI, C++ runtime and resource-manager
-behavior boundaries still need validation.
+USB and resource-manager layouts and constants, local-only resource-manager setup and dispatch timeouts, iovec bytes,
+and `devctlv` lookup and its invalid-descriptor error path. Local-only attachment registers no pathname and does not
+exercise the accessory-window path-denial or cleanup self-test. The probes do not load the plugin, exercise USB
+hardware, start a vehicle service, or establish behavior on the car. VM files are retained on failure. The HMI, C++
+runtime and resource-manager behavior boundaries still need validation.
 
 ## HMI link-only stubs
 

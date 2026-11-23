@@ -117,8 +117,9 @@ neither this build nor the probe authorizes deployment.
 
 The open sysroot now has a project-written, QNX 6.5 x86-only resource-manager subset, and the default open build
 includes `accessory_window` and `nbt_key`. The paired VM layout probe compares the sizes, alignments, used member
-offsets and constants with SDP. On the available VM these matched; the open `nbt_key --invalid` usage path also ran
-without contacting vehicle services. No MOST interaction was exercised.
+offsets and constants with SDP. On the available VM these matched, as did local-only resource-manager setup and
+repeated dispatch timeouts without registering a pathname. The open `nbt_key --invalid` usage path also ran without
+contacting vehicle services. No MOST interaction was exercised.
 
 The normal VM user could not attach the self-test's temporary resource-manager paths: `resmgr_attach` returned
 `EPERM` for both the SDP and open `accessory_window` builds. Therefore their path-denial, expiry and cleanup behavior
