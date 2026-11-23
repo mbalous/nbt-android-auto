@@ -109,6 +109,11 @@ exercise the accessory-window path-denial or cleanup self-test. The probes do no
 hardware, start a vehicle service, or establish behavior on the car. VM files are retained on failure. The HMI, C++
 runtime and resource-manager behavior boundaries still need validation.
 
+For the separate path-denial self-test, run the SDP-built and open-built `accessory_window` binaries **without
+arguments** as root on an isolated QNX VM. Each creates its own temporary files and checks expiry, SIGTERM and SIGKILL
+cleanup; a failure may leave its test directory under `/tmp`. Do not use the vehicle-window options for this test.
+Both builds passed this self-test on the available VM; this does not establish vehicle compatibility.
+
 ## HMI link-only stubs
 
 ### Build matrix

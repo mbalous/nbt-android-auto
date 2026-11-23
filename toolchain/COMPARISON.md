@@ -75,8 +75,8 @@ and `libc.so.3`. These are **SDP observations**, not verified properties of the 
    `DT_NEEDED`, symbol versions/imports/exports and plugin dependencies. Investigate differences rather than assuming
    matching names imply matching ABI. Compare the hand-written headers, struct layouts, constants, startup, spawn,
    `devctlv` and C++ runtime boundaries against SDP, especially for USB, HMI and DSI.
-3. Validate the open `accessory_window` resource-manager behavior against SDP in an appropriately authorized VM.
-   Decide separately whether the remaining omitted test tool needs an open build.
+3. Extend the isolated `accessory_window` resource-manager checks beyond the VM self-test below. Decide separately
+   whether the remaining omitted test tool needs an open build.
 4. With appropriate target libraries and isolated, non-destructive test fixtures, run dedicated ABI/runtime probes and
    existing protocol tests on the QNX VM, comparing behavior with SDP. Do not start vehicle services or install anything
    on the car as part of this step. VM success alone does not establish NBT compatibility.
@@ -122,5 +122,7 @@ repeated dispatch timeouts without registering a pathname. The open `nbt_key --i
 contacting vehicle services. No MOST interaction was exercised.
 
 The normal VM user could not attach the self-test's temporary resource-manager paths: `resmgr_attach` returned
-`EPERM` for both the SDP and open `accessory_window` builds. Therefore their path-denial, expiry and cleanup behavior
-has not been validated in that VM. Successful builds and matching layouts do not establish vehicle compatibility.
+`EPERM` for both the SDP and open `accessory_window` builds. When run as root on the isolated VM, both binaries
+passed their no-argument self-tests: six temporary paths were denied while leased and the original files were
+preserved after expiry, SIGTERM and SIGKILL. This exercises the self-test fixtures only; it does not establish
+resource-manager equivalence in every scenario or vehicle compatibility.
