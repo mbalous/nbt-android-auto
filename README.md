@@ -92,9 +92,7 @@ The stock NBT does not accept SSH logins, so SSH has to be unlocked (patched) on
 - **Free alternative:** enable SSH yourself through the debug serial port on the head unit's Jacinto board, with a USB
   serial adapter: [docs/SSH-ACCESS-SERIAL.md](docs/SSH-ACCESS-SERIAL.md). No FeatureInstaller, and nobody else
   connects to your car remotely to install things.
-- **Root password:** the default is `ts&SK412`. It can also be looked up in this forum thread:
-  [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
-  The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
+- **Root password:** the default is `ts&SK412`.
 
 Unlocking SSH changes the head unit's configuration. As with everything here, you do it at your own risk.
 
