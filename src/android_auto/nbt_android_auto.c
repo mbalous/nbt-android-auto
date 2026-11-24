@@ -301,9 +301,10 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
     pthread_mutex_lock(&c->diagnostics_mutex);
     usb_observation_begin(&c->observation[input], began_ms);
     pthread_mutex_unlock(&c->diagnostics_mutex);
-    /* AASession's wired watchdog exceeds this timeout, the callback/abort grace and the socket handoff bound. */
+    /* A 10 s IN wait tolerates brief pauses and leaves room below the supervisor's 15 s watchdog for
+     * the 1 s callback grace, 1 s abort grace and 2 s socket handoff. */
     rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,
-                       &completion_rc,input?8000:2000,&c->lifecycle,&phase,capture_callback_observed,c);
+                       &completion_rc,input?10000:2000,&c->lifecycle,&phase,capture_callback_observed,c);
     {
         const long long ended_ms = monotonic_ms();
         const unsigned elapsed_ms = began_ms >= 0 && ended_ms >= began_ms ? (unsigned)(ended_ms - began_ms) : 0;

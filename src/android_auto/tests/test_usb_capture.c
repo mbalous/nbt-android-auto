@@ -16,6 +16,7 @@ static pthread_mutex_t fake_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t fake_condition = PTHREAD_COND_INITIALIZER;
 static int fake_submit_rc, fake_completion_rc, fake_pending, fake_submitted, fake_io_calls, fake_aborts;
 static int fake_zlp_failure, fake_abort_no_callback, fake_keep_status_on_abort;
+static uint32_t fake_read_pause_ms;
 static _Uint32t fake_status, fake_actual;
 static void (*fake_callback)(struct usbd_urb*, struct usbd_pipe*, void*);
 static struct usbd_urb* fake_urb;
@@ -31,11 +32,14 @@ int usbd_io(struct usbd_urb* urb, struct usbd_pipe* pipe,
             void (*callback)(struct usbd_urb*, struct usbd_pipe*, void*), void* context, uint32_t timeout)
 {
     int rc, pending;
-    (void)timeout;
     pthread_mutex_lock(&fake_mutex);
     ++fake_io_calls;
     rc = fake_submit_rc;
     pending = fake_pending;
+    if (fake_read_pause_ms >= timeout && fake_read_pause_ms) {
+        fake_status = 0x02000005U;
+        fake_actual = 0;
+    }
     if (!rc) {
         fake_urb = urb;
         fake_callback = callback;
@@ -96,6 +100,7 @@ static void reset_fake(void)
 {
     fake_submit_rc = fake_completion_rc = fake_pending = fake_submitted = fake_io_calls = fake_aborts = 0;
     fake_zlp_failure = fake_abort_no_callback = fake_keep_status_on_abort = 0;
+    fake_read_pause_ms = 0;
     fake_status = USBD_STATUS_CMP;
     fake_actual = 0;
 }
@@ -149,6 +154,21 @@ int main(void)
     args.size = sizeof(args.data);
     read_transfer(&args);
     require_test(!args.result && fake_io_calls == 1, "undocumented submission error is not retried");
+
+    reset_fake();
+    fake_read_pause_ms = 9000;
+    fake_actual = 4;
+    memcpy(dma, "test", 4);
+    args.size = sizeof(args.data);
+    read_transfer(&args);
+    require_test(args.result && args.size == 4 && !memcmp(args.data, "test", 4) && fake_io_calls == 1,
+                 "read resumes after 9 seconds of simulated silence without resubmitting");
+
+    reset_fake();
+    fake_read_pause_ms = 11000;
+    args.size = sizeof(args.data);
+    read_transfer(&args);
+    require_test(!args.result && fake_io_calls == 1, "a sustained read timeout still fails without replay");
 
     reset_fake();
     fake_actual = 1;
