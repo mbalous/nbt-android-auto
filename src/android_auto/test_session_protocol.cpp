@@ -213,6 +213,14 @@ static void test_video_flow() {
     require(message(setup) == 0x8003 && setup.size() >= 6 && setup[4] == 0x10 && setup[5] == 3,
             "video setup advertises configured window");
     require(message(receive_encrypted(fd, server, 6)) == 0x8008, "video focus response");
+    session.postVideoFocus(false);
+    Bytes focus = receive_encrypted(fd, server, 6);
+    require(focus.size() == 6 && message(focus) == 0x8008 && focus[2] == 8 && focus[3] == 2 &&
+            focus[4] == 16 && focus[5] == 1, "keyframe request sends unrequested native focus");
+    session.postVideoFocus(true);
+    focus = receive_encrypted(fd, server, 6);
+    require(focus.size() == 6 && message(focus) == 0x8008 && focus[2] == 8 && focus[3] == 1 &&
+            focus[4] == 16 && focus[5] == 1, "keyframe request restores projected focus");
     Bytes start = msg(0x8001); start.push_back(8); start.push_back(7); start.push_back(16); start.push_back(0);
     send_encrypted(fd, server, carrier, 6, start);
     Bytes frame = msg(0); frame.resize(10, 0);

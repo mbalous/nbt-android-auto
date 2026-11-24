@@ -17,6 +17,7 @@
 #include "aa_audio.hpp"
 #include "aa_session.hpp"
 #include "aa_media_out.hpp"
+#include "keyframe_ask.hpp"
 #include "video_recovery.h"
 #include <pthread.h>
 #include <sys/socket.h>
@@ -411,10 +412,10 @@ struct LiveQueue {
     pthread_cond_t cv;
     std::deque<LiveItem> items;             // H.264 access units
     size_t bytes;                            // total size of items
-    bool stop, dropping, paused, need_idr, condition_ready;
+    bool stop, dropping, paused, need_idr, keyframe_wanted, condition_ready;
     std::vector<uint8_t> recovery_config;
     unsigned dropped, drops;                 // dropped frames, number of drop runs
-    LiveQueue() : bytes(0), stop(false), dropping(false), paused(false), need_idr(false), condition_ready(false),
+    LiveQueue() : bytes(0), stop(false), dropping(false), paused(false), need_idr(false), keyframe_wanted(false), condition_ready(false),
                   dropped(0), drops(0)
     {
         pthread_mutex_init(&m, 0);
@@ -537,6 +538,7 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config, uint64_t 
     const bool restart = config || ((q.dropping || over_budget) && has_idr(p, n));
     if (q.dropping && !restart) {
         ++q.dropped;
+        q.keyframe_wanted = true;
         pthread_mutex_unlock(&q.m);
         video_consumed(c, token);
         return;
@@ -544,6 +546,7 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config, uint64_t 
     if (over_budget) {
         if (!restart) {
             q.dropping = true;
+            q.keyframe_wanted = true;
             ++q.drops;
             ++q.dropped;
             pthread_mutex_unlock(&q.m);
@@ -559,6 +562,8 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config, uint64_t 
         }
     }
     q.dropping = false;
+    if (!config && has_idr(p, n))
+        q.keyframe_wanted = false;
     q.items.push_back(LiveItem(token));
     std::vector<uint8_t>& v = q.items.back().data;
     v.reserve(padded_size + (recovering ? q.recovery_config.size() : 0));
@@ -927,8 +932,20 @@ void pause_live_writer(Capture* c)
     pthread_mutex_lock(&c->queue.m);
     c->queue.paused = true;
     c->queue.need_idr = false;
+    c->queue.keyframe_wanted = false;
     clear_live_queue(c);
     pthread_mutex_unlock(&c->queue.m);
+}
+
+KeyframeAsk::Action keyframe_step(Capture* c, KeyframeAsk& ask, long long now, bool can_ask, bool can_restore)
+{
+    pthread_mutex_lock(&c->queue.m);
+    const KeyframeAsk::Action action = ask.step(now, c->queue.keyframe_wanted,
+                                               can_ask && !c->queue.paused && !c->queue.need_idr, can_restore);
+    if (action == KeyframeAsk::focus_off)
+        c->queue.keyframe_wanted = false;
+    pthread_mutex_unlock(&c->queue.m);
+    return action;
 }
 
 bool video_writer_status(Capture* c, unsigned generation, const char* state)
@@ -1363,6 +1380,9 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
     unsigned refreshed_generation = 0;
     long long next_focus_check = 0;
     FocusHandoff handoff;
+    KeyframeAsk keyframe_ask;
+    const char* keyframe_option = getenv("NBT_AA_DROP_IDR");
+    const bool keyframe_enabled = c.live && keyframe_option && !strcmp(keyframe_option, "1");
     const long long start = now_ms();
     // Clean end (car 2026-11-10): an abrupt end (service restart, decoder gone) left Android Auto on the phone stuck until
     // it was force-stopped ("Invalid channel ... premature encryption" right after the next VersionRequest). Before
@@ -1439,6 +1459,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
                 printf("AA_NIGHT car headlights %s: Android Auto %s\n", n ? "on" : "off", n ? "night (dark)" : "day");
             }
         }
+        bool focus_posted = false;
         if (c.live && !bye_until) {
             pthread_mutex_lock(&c.mutex);
             const bool native_requested = c.native_focus_pending;
@@ -1446,10 +1467,16 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
             pthread_mutex_unlock(&c.mutex);
             const long long tm = now_ms();
             const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
-            if (native_requested && handoff.request(tm, visible, kExitRequest))
+            if (native_requested && handoff.request(tm, visible, kExitRequest)) {
                 session.postVideoFocus(true);
-            if (handoff.tick(tm, visible, bg_focus, shown_state, kExitRequest))
+                keyframe_ask.restored();
+                focus_posted = true;
+            }
+            if (handoff.tick(tm, visible, bg_focus, shown_state, kExitRequest)) {
                 session.postVideoFocus(true);
+                keyframe_ask.restored();
+                focus_posted = true;
+            }
             if (!c.video_token.empty() && visible && !handoff.pending && !native_requested) {
                 unsigned generation;
                 char state[32];
@@ -1457,6 +1484,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
                     generation > refreshed_generation && !strcmp(state, "opened")) {
                     refreshed_generation = generation;
                     session.postVideoFocus(true);
+                    keyframe_ask.restored();
+                    focus_posted = true;
                     printf("AA_VIDEO_RECOVERY session=%s generation=%u state=focus_refresh uptime_ms=%lld\n",
                            c.video_token.c_str(), generation, tm);
                 }
@@ -1468,7 +1497,25 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
             if (visible != shown_state) {
                 shown_state = visible;
                 session.postVideoFocus(visible != 0);
+                if (visible)
+                    keyframe_ask.restored();
+                focus_posted = true;
                 printf("AA_VIDEO_FOCUS %s\n", visible ? "PROJECTED (page on screen)" : "NATIVE (iDrive on screen)");
+            }
+        }
+        if (keyframe_enabled && !bye_until && !focus_posted) {
+            const long long tm = now_ms();
+            const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
+            pthread_mutex_lock(&c.mutex);
+            const bool native_requested = c.native_focus_pending;
+            pthread_mutex_unlock(&c.mutex);
+            const bool safe_focus = visible && !handoff.pending && !native_requested;
+            const KeyframeAsk::Action action = keyframe_step(&c, keyframe_ask, tm,
+                                                             safe_focus && tm >= start + 5000, safe_focus);
+            if (action != KeyframeAsk::none) {
+                session.postVideoFocus(action == KeyframeAsk::focus_on);
+                printf("AA_KEYFRAME_REQUEST focus=%s uptime_ms=%lld\n",
+                       action == KeyframeAsk::focus_on ? "projected" : "native", tm);
             }
         }
         fd_set fds;
