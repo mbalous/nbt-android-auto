@@ -141,6 +141,7 @@ static int endedAdd(int value) {
     files[lifecycle_path] = lifecycle.encode()
     files["reference/src/aa_cryptor.hpp"] = (ROOT / "src/android_auto/aa_cryptor.hpp").read_bytes()
     files["reference/src/aa_cryptor.cpp"] = (ROOT / "src/android_auto/aa_cryptor_mbedtls.cpp").read_bytes()
+    files["reference/src/video_acks.hpp"] = (ROOT / "src/android_auto/video_acks.hpp").read_bytes()
     session_path = "reference/src/aa_session.cpp"
     files[session_path] = harden_session(files[session_path].decode().replace("\r\n", "\n")).encode()
     prepare_audio_sources(files)

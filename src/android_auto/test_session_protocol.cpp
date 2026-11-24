@@ -162,6 +162,113 @@ static void configure_identity() {
     setenv("NBT_AA_TLS_CA", "lab-ca.pem", 1);
     setenv("NBT_AA_TLS_PEER", "qnx-aa-lab.local", 1);
 }
+
+struct VideoFrames {
+    pthread_mutex_t mutex;
+    nbt::AASession* session;
+    std::vector<uint64_t> tokens;
+    explicit VideoFrames(nbt::AASession* s) : session(s) { pthread_mutex_init(&mutex, NULL); }
+    ~VideoFrames() { pthread_mutex_destroy(&mutex); }
+};
+static void on_video(uint32_t, Bytes& data, size_t offset, size_t length, uint64_t, void* ctx) {
+    VideoFrames* frames = static_cast<VideoFrames*>(ctx);
+    require(offset <= data.size() && length <= data.size() - offset, "valid video slice");
+    const uint64_t token = frames->session->currentVideoToken();
+    pthread_mutex_lock(&frames->mutex);
+    frames->tokens.push_back(token);
+    pthread_mutex_unlock(&frames->mutex);
+}
+static uint64_t wait_video(VideoFrames& frames, unsigned count) {
+    for (unsigned i = 0; i < 200; ++i) {
+        pthread_mutex_lock(&frames.mutex);
+        const uint64_t token = frames.tokens.size() >= count ? frames.tokens[count - 1] : 0;
+        pthread_mutex_unlock(&frames.mutex);
+        if (token) return token;
+        usleep(10000);
+    }
+    require(false, "video callback deadline");
+    return 0;
+}
+static void no_video_ack(int fd, unsigned ms) {
+    fd_set fds; FD_ZERO(&fds); FD_SET(fd, &fds);
+    struct timeval timeout = { (long)(ms / 1000), (long)((ms % 1000) * 1000) };
+    require(select(fd + 1, &fds, NULL, NULL, &timeout) == 0, "video ack remains deferred");
+}
+static void test_video_flow() {
+    setenv("NBT_AA_VIDEO_FPS", "2", 1);
+    setenv("NBT_AA_VIDEO_WINDOW", "3", 1);
+    nbt::AASession session;
+    VideoFrames frames(&session);
+    unsigned audio_calls = 0;
+    session.setVideoFrameCallback(on_video, &frames);
+    session.setAudioFrameCallback(on_audio, &audio_calls);
+    session.setVideoAckGate(true);
+    peer* server = (peer*)calloc(1, sizeof(peer));
+    peer* carrier = (peer*)calloc(1, sizeof(peer));
+    require(server && carrier, "allocate video phone");
+    server->other = carrier; initialize(server, 1, NULL);
+    int fd = begin(session); negotiate(fd, server, carrier);
+    send_encrypted(fd, server, carrier, 6, msg(0x8000));
+    Bytes setup = receive_encrypted(fd, server, 6);
+    require(message(setup) == 0x8003 && setup.size() >= 6 && setup[4] == 0x10 && setup[5] == 3,
+            "video setup advertises configured window");
+    require(message(receive_encrypted(fd, server, 6)) == 0x8008, "video focus response");
+    Bytes start = msg(0x8001); start.push_back(8); start.push_back(7); start.push_back(16); start.push_back(0);
+    send_encrypted(fd, server, carrier, 6, start);
+    Bytes frame = msg(0); frame.resize(10, 0);
+    frame.push_back(0); frame.push_back(0); frame.push_back(0); frame.push_back(1); frame.push_back(0x65);
+    send_encrypted(fd, server, carrier, 6, frame);
+    const uint64_t first = wait_video(frames, 1);
+    send_encrypted(fd, server, carrier, 6, frame);
+    const uint64_t second = wait_video(frames, 2);
+    session.postVideoConsumed(second);
+    no_video_ack(fd, 50);
+    Bytes pcm = msg(0); pcm.resize(10, 0); pcm[9] = 42;
+    pcm.push_back(0x12); pcm.push_back(0x34); pcm.push_back(0x56); pcm.push_back(0x78);
+    send_encrypted(fd, server, carrier, 9, pcm);
+    require(message(receive_encrypted(fd, server, 9)) == 0x8004,
+            "audio remains responsive while video is gated");
+    session.postVideoConsumed(first);
+    require(message(receive_encrypted(fd, server, 6)) == 0x8004, "handoff releases first ack");
+    no_video_ack(fd, 150);
+    require(message(receive_encrypted(fd, server, 6)) == 0x8004, "second ack obeys rate limit");
+    send_encrypted(fd, server, carrier, 6, frame);
+    const uint64_t old = wait_video(frames, 3);
+    send_encrypted(fd, server, carrier, 6, start);
+    require(message(receive_encrypted(fd, server, 6)) == 0x8004, "new stream flushes old ack");
+    send_encrypted(fd, server, carrier, 6, frame);
+    const uint64_t fresh = wait_video(frames, 4);
+    session.postVideoConsumed(old);
+    no_video_ack(fd, 50);
+    session.postVideoConsumed(fresh);
+    require(message(receive_encrypted(fd, server, 6)) == 0x8004, "old handoff cannot release new stream ack");
+    session.stop(); close(fd);
+    require(audio_calls == 1, "gated video preserves audio callback");
+    release(server); free(carrier);
+    setenv("NBT_AA_VIDEO_FPS", "0", 1);
+    nbt::AASession ungated;
+    VideoFrames ungated_frames(&ungated);
+    ungated.setVideoFrameCallback(on_video, &ungated_frames);
+    ungated.setVideoAckGate(false);
+    server = (peer*)calloc(1, sizeof(peer));
+    carrier = (peer*)calloc(1, sizeof(peer));
+    require(server && carrier, "allocate ungated phone");
+    server->other = carrier; initialize(server, 1, NULL);
+    fd = begin(ungated); negotiate(fd, server, carrier);
+    send_encrypted(fd, server, carrier, 6, msg(0x8000));
+    setup = receive_encrypted(fd, server, 6);
+    require(message(setup) == 0x8003 && setup.size() >= 6 && setup[5] == 10, "ungated video window");
+    require(message(receive_encrypted(fd, server, 6)) == 0x8008, "ungated video focus response");
+    send_encrypted(fd, server, carrier, 6, start);
+    send_encrypted(fd, server, carrier, 6, frame);
+    require(message(receive_encrypted(fd, server, 6)) == 0x8004, "disabled flow control acks on arrival");
+    ungated.stop(); close(fd);
+    release(server); free(carrier);
+    unsetenv("NBT_AA_VIDEO_FPS");
+    unsetenv("NBT_AA_VIDEO_WINDOW");
+    puts("AA_VIDEO_FLOW_OK");
+}
+
 int main() {
     alarm(90); signal(SIGPIPE, SIG_IGN); setvbuf(stdout, NULL, _IOLBF, 0);
     check((int)psa_crypto_init(), "PSA init");
@@ -248,5 +355,6 @@ int main() {
     }
     require(audio_calls == 1, "only authenticated PCM delivered");
     puts("AA_PROTOCOL_SIMULATOR_OK handshakes=4 discovery=4 PCM=1 phone-status ping bye tamper repeated-auth plaintext-rejection reconnect");
+    test_video_flow();
     return 0;
 }

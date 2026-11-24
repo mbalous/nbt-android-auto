@@ -116,7 +116,7 @@ void test_padded_queue_budget()
     const uint8_t idr[] = {0, 0, 0, 1, 0x65, 0xaa};
     feed_video(idr, sizeof(idr), 4, &c);
     require(!c.queue.dropping && c.queue.dropped == 2 && c.queue.items.size() == 2 &&
-            c.queue.bytes == tail + 24 && c.queue.items.back()[4] == 0x65,
+            c.queue.bytes == tail + 24 && c.queue.items.back().data[4] == 0x65,
             "evict enough backlog to queue the padded keyframe within budget");
 }
 
@@ -153,6 +153,43 @@ void test_live_recovery()
     require(c.frames == 4 && c.bytes == 3 * frame.size() + sizeof(kFrame),
             "live source count includes frames dropped by the queue");
     expect_live_output(c, frame);
+}
+
+void test_video_ack_queue()
+{
+    nbt::AASession session;
+    Capture c;
+    c.live = true;
+    c.session = &session;
+    config(kConfig, sizeof(kConfig), &c);
+    session.token = 1;
+    feed_video(kFrame, sizeof(kFrame), 1, &c);
+    require(session.consumed.empty(), "queued frame is not acknowledged before handoff");
+    session.token = 2;
+    c.queue.paused = true;
+    feed_video(kFrame, sizeof(kFrame), 2, &c);
+    c.queue.paused = false;
+    require(session.consumed.size() == 1 && session.consumed[0] == 2, "dropped frame reports its own token");
+
+    std::vector<uint8_t> expected(kConfig, kConfig + sizeof(kConfig));
+    const uint8_t padded_frame[] = {
+        0, 0, 0, 1, 0x41, 0xaa, 0, 0, 0, 1, 0x0c,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80
+    };
+    expected.insert(expected.end(), padded_frame, padded_frame + sizeof(padded_frame));
+    expect_live_output(c, expected);
+    require(session.consumed.size() == 2 && session.consumed[1] == 1, "writer reports handed-off frame, not config");
+
+    Capture recovery;
+    recovery.live = true;
+    recovery.session = &session;
+    session.token = 3;
+    feed_video(kFrame, sizeof(kFrame), 3, &recovery);
+    session.token = 4;
+    feed_video(kFrame, sizeof(kFrame), 4, &recovery);
+    pause_live_writer(&recovery);
+    require(session.consumed.size() == 4 && session.consumed[2] == 3 && session.consumed[3] == 4,
+            "recovery pause reports all discarded frames");
 }
 
 void wait_video_status(const char* path, const char* token, unsigned expected, const char* wanted)
@@ -439,6 +476,7 @@ int main()
     test_diagnostic_capture();
     test_live_stream();
     test_live_recovery();
+    test_video_ack_queue();
     test_fifo_reconnect();
     test_socket_backpressure();
     test_padded_queue_budget();

@@ -108,6 +108,8 @@ changing them, unless noted otherwise.
 | `bt-audio` | Use Bluetooth audio instead of USB. |
 | `aa-volume-off` | Disable software media-volume adjustment. |
 | `prompts-off` | Disable prompts over other car audio sources. |
+| `video.fps` | Set the video ACK rate limit (0–60; default 20, 0 disables the limit). |
+| `video.gate.off` | Disable decoder-paced video ACKs; the rate limit still applies. |
 | `tls-allow-date-errors` | Allow expired or not-yet-valid phone certificates; other certificate checks remain enforced. |
 | `incident-logging` | Enable bounded persistent incident snapshots and event logs. |
 | `extended-log-history` | Enable bounded persistent boot-log history, starting at the next head-unit boot. |

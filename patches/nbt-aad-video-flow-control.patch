@@ -1,0 +1,145 @@
+NBT-AAD patch: decoder-paced video ACKs and rate limit, adapted from
+https://github.com/JayJay3071/nbt-android-auto/blob/e495daea8aeec4aba31b2731a524dceaa3953a88/patches/0003-nbt-aad-flow-control-media.patch.
+Upstream: https://github.com/Sq00ky/Supra-iDrive6-Android-Auto commit cd1d9f8.
+Apply after scripts/aa_session_overlay.py; video_acks.hpp is supplied by this repository.
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index 879c9c9..8b867c7 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -67,6 +67,9 @@ AASession::AASession()
+     pthread_mutex_init(&lifecycle_mutex_, NULL);
+     pthread_mutex_init(&fd_mutex_, NULL);
+     pthread_mutex_init(&touch_mutex_, NULL);
++    video_flow_enabled_ = video_gate_ = false;
++    video_window_ = 10;
++    current_video_token_ = 0;
+     input_ready_ = false;
+     memset(av_session_, 0, sizeof(av_session_));
+     pending_focus_ = 0;
+@@ -350,12 +353,28 @@ void AASession::postAudioConsumed(uint8_t channel, size_t bytes) {
+     if (acks_.consumed(channel, bytes)) wakeSessionThread();
+ }
+
++void AASession::setVideoAckGate(bool on) {
++    video_flow_enabled_ = true;
++    video_gate_ = on;
++}
++
++uint64_t AASession::currentVideoToken() const { return current_video_token_; }
++
++void AASession::postVideoConsumed(uint64_t token) {
++    if (video_acks_.consumed(token)) wakeSessionThread();
++}
++
+ bool AASession::sendAckThunk(uint8_t channel, uint64_t rx_wall_ns, void* self) {
+     return static_cast<AASession*>(self)->sendAvMediaAck(channel, rx_wall_ns);
+ }
+
+ void AASession::drainAcks() {
+     acks_.drain(&sendAckThunk, this);
++    bool forced;
++    while (video_acks_.take(monoS(), forced)) {
++        if (forced) printf("[AASession] video frame unreported for 15 s: forcing ack\n");
++        sendAvMediaAck(6);
++    }
+ }
+
+ void AASession::setUnderflowReports(bool on) { acks_.setUnderflowReports(on); }
+@@ -481,6 +500,13 @@ bool AASession::start(int client_fd) {
+     for (int c = 0; c < 32; ++c) offered_audio_[c].clear();   // filled again when this session sends its SDR
+     audio_frames_[0] = audio_frames_[1] = audio_frames_[2] = 0;
+     acks_.startSession();
++    const unsigned video_fps = video_flow_enabled_ ? (unsigned)envRange("NBT_AA_VIDEO_FPS", 20, 0, 60) : 0;
++    video_window_ = video_flow_enabled_ && (video_gate_ || video_fps)
++                    ? (unsigned)envRange("NBT_AA_VIDEO_WINDOW", 3, 1, 10) : 10;
++    video_acks_.start(video_flow_enabled_, video_gate_, video_fps);
++    current_video_token_ = 0;
++    if (video_flow_enabled_)
++        printf("[AASession] video acks: gate=%d fps=%u window=%u\n", video_gate_, video_fps, video_window_);
+     setRunning(true);
+
+     if (pthread_create(&thread_, NULL, &AASession::sessionThreadStub, this) != 0) {
+@@ -943,7 +969,8 @@ bool AASession::sendAvSetupResponse(uint8_t channel) {
+     // AVChannelSetupResponse: media_status=OK(2), max_unacked=10, configs[0]=0. Audio sinks get NBT_AA_MAX_UNACKED
+     // (default 10, 4..64; at most 64 keeps it a one-byte varint): with deferred acks it is how far the phone may run
+     // ahead.
+-    const uint8_t window = isAaAudioSinkChannel(channel) ? (uint8_t)acks_.maxUnacked() : 10;
++    const uint8_t window = isAaAudioSinkChannel(channel) ? (uint8_t)acks_.maxUnacked()
++                           : channel == 6 ? (uint8_t)video_window_ : 10;
+     uint8_t plain[8] = { 0x80, 0x03, 0x08, 0x02, 0x10, window, 0x18, 0x00 };
+     std::vector<uint8_t> enc;
+     if (cryptor_.encrypt(plain, sizeof(plain), enc)) {
+@@ -1166,6 +1193,8 @@ static uint32_t msLeft(uint32_t last_ms, uint32_t every_ms, uint32_t now) {
+ // phone would stretch a compass repeat to 2 s. A 0 here cannot spin, because sendSensorEvent stamps the time before it sends.
+ uint32_t AASession::periodicTickMs() {
+     uint32_t tick = acks_.hasPending() ? 250u : 1000u;
++    const uint32_t video_tick = video_acks_.tickMs(monoS());
++    if (video_tick < tick) tick = video_tick;
+     const uint32_t now = monoMs();
+     if (satellites_started_) {
+         const uint32_t left = msLeft(satellites_last_ms_, kSatelliteSendEveryMs, now);
+@@ -1504,6 +1533,10 @@ void AASession::sessionLoop() {
+                 uint32_t sess = pbFirstVarint(frame_data, 2, 1);
+                 // A new stream: ack what the old one still has pending (deferred acks), start counting afresh.
+                 acks_.onStreamStart(channel, &sendAckThunk, this);
++                if (channel == 6) {
++                    unsigned pending = video_acks_.resetStream();
++                    while (pending--) sendAvMediaAck(6);
++                }
+                 if (sess != 0xFFFFFFFFu) av_session_[channel & 31] = sess;
+                 printf("[AASession] >>> Received AV START_INDICATION on Channel %u (session %u)! Projection ACTIVE!\n", channel,
+                        sess == 0xFFFFFFFFu ? 0u : sess);
+@@ -1628,9 +1661,17 @@ void AASession::sessionLoop() {
+                         // in the mdev Message 3 iov. Transfer the decrypted message buffer so the access unit is not
+                         // copied just to move it across the callback boundary.
+                         if (video_cb_) {
++                            bool overflow = false;
++                            current_video_token_ = video_acks_.frame(monoS(), overflow);
++                            if (overflow) {
++                                printf("[AASession] video ack queue full: forcing oldest ack\n");
++                                sendAvMediaAck(6);
++                            }
++                            if (current_video_token_) deferred = true;
+                             g_crumb_stage = 4;
+                             video_cb_(media_frames_, frame_data, offset, nal_len, pts, video_user_data_);
+                             g_crumb_stage = 3;
++                            current_video_token_ = 0;
+                         }
+                     }
+                 }
+diff --git a/milestone-7/src/aa_session.hpp b/milestone-7/src/aa_session.hpp
+index 8ff7bf4..afb77f5 100644
+--- a/milestone-7/src/aa_session.hpp
++++ b/milestone-7/src/aa_session.hpp
+@@ -13,6 +13,7 @@
+ #include "audio/audio_acks.hpp"
+ #include "sdr_builder.hpp"
+ #include "touch_types.hpp"
++#include "video_acks.hpp"
+
+ namespace nbt {
+
+@@ -114,6 +115,11 @@ public:
+     // the acks go out from the session thread, woken through the wake pipe.
+     void postAudioConsumed(uint8_t channel, size_t bytes);
+
++    // Enable video pacing for this session; the gate additionally waits for FIFO handoff or a drop.
++    void setVideoAckGate(bool on);
++    uint64_t currentVideoToken() const;
++    void postVideoConsumed(uint64_t token);
++
+     // Underflow reports (browser audio mode): AudioUnderflowNotification (0x800b) to the phone when the consumer ran
+     // dry on a started stream, as Google's head unit does. Set before start(). postAudioUnderflow is thread-safe
+     // (mixer thread); the message goes out from the session thread.
+@@ -254,6 +260,10 @@ private:
+     // Deferred audio acks and underflow reports (audio/audio_acks.hpp): their state lives in acks_ (thread-safe); the
+     // session thread records frames into it and sends what it releases.
+     AudioAcks acks_;
++    VideoAcks video_acks_;
++    bool video_flow_enabled_, video_gate_;
++    unsigned video_window_;
++    uint64_t current_video_token_;
+     void drainAcks();                // session thread: send the acks acks_ releases
+     void drainUnderflows();          // session thread: send the underflow reports posted since the last drain
+     void wakeSessionThread();        // a byte down the wake pipe (consumer thread)

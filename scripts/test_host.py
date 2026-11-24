@@ -52,6 +52,7 @@ def main():
             ("experiments/png-pipeline/test_frame_packet.cpp", [str(png)], []),
             ("src/android_auto/tests/test_video_capture_output.cpp", [],
              ["-pthread", "-I", str(ROOT / "src/android_auto/tests/fake")]),
+            ("src/android_auto/tests/test_video_acks.cpp", [], ["-pthread"]),
             ("src/android_auto/tests/test_fifo_http.cpp", [], ["-pthread"]),
             ("src/android_auto/tests/test_video_supervisor.c", [], ["-pthread"]),
             ("src/idrive/test_exit_handoff.cpp", [str(work)],

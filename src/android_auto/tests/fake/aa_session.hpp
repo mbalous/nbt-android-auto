@@ -11,6 +11,18 @@ namespace nbt {
 // Host capture tests feed the media callbacks directly; the session must not run.
 class AASession {
 public:
+    AASession() : token(0) { pthread_mutex_init(&mutex, 0); }
+    ~AASession() { pthread_mutex_destroy(&mutex); }
+    uint64_t token;
+    pthread_mutex_t mutex;
+    std::vector<uint64_t> consumed;
+    void setVideoAckGate(bool) { abort(); }
+    uint64_t currentVideoToken() const { return token; }
+    void postVideoConsumed(uint64_t value) {
+        pthread_mutex_lock(&mutex);
+        consumed.push_back(value);
+        pthread_mutex_unlock(&mutex);
+    }
     void setVideoFrameCallback(void (*)(uint32_t, std::vector<uint8_t>&, size_t, size_t, uint64_t, void*), void*) { abort(); }
     void setCodecConfigCallback(void (*)(const uint8_t*, size_t, void*), void*) { abort(); }
     void setNavStatusCallback(void (*)(uint16_t, const uint8_t*, size_t, void*), void*) { abort(); }

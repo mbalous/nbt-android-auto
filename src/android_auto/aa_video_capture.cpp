@@ -400,10 +400,16 @@ namespace {
 // lag), the phone throttled the video and finally ended the session. Now the session thread only queues the access unit;
 // a writer thread feeds the FIFO. When the queue exceeds its budget the frames are dropped up to the next IDR picture, so
 // the decoder always resumes on a clean picture and the session thread never waits.
+struct LiveItem {
+    std::vector<uint8_t> data;
+    uint64_t token;
+    explicit LiveItem(uint64_t t) : token(t) {}
+};
+
 struct LiveQueue {
     pthread_mutex_t m;
     pthread_cond_t cv;
-    std::deque<std::vector<uint8_t> > items; // H.264 access units
+    std::deque<LiveItem> items;             // H.264 access units
     size_t bytes;                            // total size of items
     bool stop, dropping, paused, need_idr, condition_ready;
     std::vector<uint8_t> recovery_config;
@@ -452,13 +458,14 @@ struct Capture {
     const char* video_control;
     const char* video_status;
     std::string live_fifo;
+    nbt::AASession* session;
     LiveQueue queue;
     Capture() : socket(-1), data(-1), index(-1), error(0), stop_reader(false), reader_error(0),
                 read_size(NBT_CAPTURE_MAX_TRANSFER), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
                 max_usb_in_ms(0), max_usb_to_socket_ms(0), max_usb_out_ms(0),
                 usb_in_started(-1), usb_to_socket_started(-1), usb_out_started(-1),
                 live(false), native_focus_pending(false), video_control(NBT_VIDEO_CONTROL),
-                video_status(NBT_VIDEO_STATUS)
+                video_status(NBT_VIDEO_STATUS), session(0)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -476,8 +483,25 @@ bool has_nal(const uint8_t* p, size_t n, unsigned type)
 
 bool has_idr(const uint8_t* p, size_t n) { return has_nal(p, n, 5); }
 
+void video_consumed(Capture* c, uint64_t token)
+{
+    if (c->session && token)
+        c->session->postVideoConsumed(token);
+}
+
+// Caller holds the live queue mutex.
+void clear_live_queue(Capture* c)
+{
+    LiveQueue& q = c->queue;
+    while (!q.items.empty()) {
+        video_consumed(c, q.items.front().token);
+        q.items.pop_front();
+    }
+    q.bytes = 0;
+}
+
 // session thread: never blocks on the decoder
-void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
+void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config, uint64_t token)
 {
     LiveQueue& q = c->queue;
     pthread_mutex_lock(&q.m);
@@ -489,12 +513,12 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     if (q.paused || (q.need_idr && (config || !has_idr(p, n) || q.recovery_config.empty()))) {
         ++q.dropped;
         pthread_mutex_unlock(&q.m);
+        video_consumed(c, token);
         return;
     }
     const bool recovering = q.need_idr;
     if (recovering) {
-        q.items.clear();
-        q.bytes = 0;
+        clear_live_queue(c);
         q.need_idr = false;
         q.dropping = false;
     }
@@ -514,6 +538,7 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     if (q.dropping && !restart) {
         ++q.dropped;
         pthread_mutex_unlock(&q.m);
+        video_consumed(c, token);
         return;
     }
     if (over_budget) {
@@ -522,18 +547,20 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
             ++q.drops;
             ++q.dropped;
             pthread_mutex_unlock(&q.m);
+            video_consumed(c, token);
             return;
         }
         // a fresh IDR/config does not fit: throw away the old backlog, the decoder restarts on this picture
         while (!q.items.empty() && q.bytes + padded_size > kLiveBudget) {
-            q.bytes -= q.items.front().size();
+            q.bytes -= q.items.front().data.size();
+            video_consumed(c, q.items.front().token);
             q.items.pop_front();
             ++q.dropped;
         }
     }
     q.dropping = false;
-    q.items.push_back(std::vector<uint8_t>());
-    std::vector<uint8_t>& v = q.items.back();
+    q.items.push_back(LiveItem(token));
+    std::vector<uint8_t>& v = q.items.back().data;
     v.reserve(padded_size + (recovering ? q.recovery_config.size() : 0));
     if (recovering)
         v.insert(v.end(), q.recovery_config.begin(), q.recovery_config.end());
@@ -582,8 +609,9 @@ bool write_all(int fd, const unsigned char* p, size_t n)
 }
 
 // one H.264 access unit (or codec config) from the session
-void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
+void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config, uint64_t token = 0)
 {
+    bool queued = false;
     pthread_mutex_lock(&c->mutex);
     if (!c->error && c->frames < c->frame_limit) {
         const bool annexb = n >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1));
@@ -595,7 +623,8 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
                 ++c->received;
             if (c->live) {
                 // Count valid input even when backpressure drops it; queue drops are logged separately.
-                live_enqueue(c, p, n, config);
+                live_enqueue(c, p, n, config, token);
+                queued = true;
             } else {
                 accepted = write_all(c->data, p, n);
                 if (accepted && c->index >= 0) {
@@ -617,13 +646,19 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
         }
     }
     pthread_mutex_unlock(&c->mutex);
+    if (!queued)
+        video_consumed(c, token);
 }
 
 // AASession video frame callback
 void video(uint32_t, std::vector<uint8_t>& frame_data, size_t data_offset, size_t data_len, uint64_t pts, void* v)
 {
+    Capture* c = (Capture*)v;
+    const uint64_t token = c->session ? c->session->currentVideoToken() : 0;
     if (data_offset <= frame_data.size() && data_len <= frame_data.size() - data_offset)
-        save((Capture*)v, data_len ? &frame_data[data_offset] : 0, data_len, pts, false);
+        save(c, data_len ? &frame_data[data_offset] : 0, data_len, pts, false, token);
+    else
+        video_consumed(c, token);
 }
 
 // Android Auto sound into the car (2026-11-18, aa_media_out.hpp): the service sets NBT_AA_MEDIA_OUT to the io-amp input
@@ -892,8 +927,7 @@ void pause_live_writer(Capture* c)
     pthread_mutex_lock(&c->queue.m);
     c->queue.paused = true;
     c->queue.need_idr = false;
-    c->queue.items.clear();
-    c->queue.bytes = 0;
+    clear_live_queue(c);
     pthread_mutex_unlock(&c->queue.m);
 }
 
@@ -988,19 +1022,20 @@ void* live_writer(void* v)
             pthread_mutex_unlock(&q.m);
             continue;
         }
-        std::vector<uint8_t> item;
-        item.swap(q.items.front());
+        LiveItem item(0);
+        item.data.swap(q.items.front().data);
+        item.token = q.items.front().token;
         q.items.pop_front();
-        q.bytes -= item.size();
+        q.bytes -= item.data.size();
         pthread_mutex_unlock(&q.m);
         size_t off = 0;
-        while (off < item.size()) {
+        while (off < item.data.size()) {
             const unsigned previous_generation = generation;
             if (!video_writer_control(c, generation, phase))
                 return 0;
             if (generation != previous_generation || phase == 1 || phase == 3)
                 break;
-            ssize_t k = write(c->data, &item[off], item.size() - off);
+            ssize_t k = write(c->data, &item.data[off], item.data.size() - off);
             if (k > 0) {
                 off += (size_t)k;
                 continue;
@@ -1011,8 +1046,10 @@ void* live_writer(void* v)
                 pthread_mutex_lock(&q.m);
                 bool stop = q.stop;
                 pthread_mutex_unlock(&q.m);
-                if (stop)
+                if (stop) {
+                    video_consumed(c, item.token);
                     return 0;
+                }
                 fd_set set;
                 FD_ZERO(&set);
                 FD_SET(c->data, &set);
@@ -1034,7 +1071,8 @@ void* live_writer(void* v)
             pthread_mutex_unlock(&c->mutex);
             return 0;
         }
-        if (off == item.size() && phase == 2) {
+        video_consumed(c, item.token);
+        if (off == item.data.size() && phase == 2) {
             phase = 0;
             if (!video_writer_status(c, generation, "running"))
                 return 0;
@@ -1223,6 +1261,9 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, nbt_capture_
     session.setCodecConfigCallback(config, &c);
     bool media_audio_started = false;
     if (c.live) {
+        c.session = &session;
+        const char* video_gate = getenv("NBT_AA_VIDEO_GATE");
+        session.setVideoAckGate(!(video_gate && !strcmp(video_gate, "0")));
         session.setNavStatusCallback(nav_status, 0);
         session.setMediaStatusCallback(media_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
