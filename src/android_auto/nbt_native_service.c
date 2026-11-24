@@ -507,6 +507,29 @@ static void ignore_dev(int bus, int addr, unsigned v, unsigned p)
 static unsigned found_v, found_p; /* vendor/product of the last normal-mode candidate (for NBT_PHONE_ID) */
 static unsigned found_aoa;        /* product id of the last accessory-mode device (0x2d00 or 0x2d01) */
 
+typedef struct {
+    int type;
+    UsbDev device;
+} UsbRetry;
+
+static UsbRetry usb_retry_target(int type, int bus, int device)
+{
+    UsbRetry target = {type, {bus, device, found_v, found_p}};
+    if (type == PHONE_ACCESSORY) {
+        target.device.v = USB_VENDOR_GOOGLE;
+        target.device.p = found_aoa;
+    }
+    return target;
+}
+
+static int usb_retry_matches(UsbRetry failed, UsbRetry current)
+{
+    /* Inventory can rule out a changed target, but cannot prove identity if all fields were reused. */
+    return failed.type != PHONE_NONE && current.type == failed.type &&
+           failed.device.bus == current.device.bus && failed.device.addr == current.device.addr &&
+           failed.device.v == current.device.v && failed.device.p == current.device.p;
+}
+
 /* Parses the output of the QNX "usb" tool. Returns PHONE_NORMAL / PHONE_ACCESSORY with *bus / *device set when exactly
  * one candidate is present, else PHONE_NONE. Also updates g_phone_present (any candidate seen). */
 static int find_phone(int* bus, int* device)
@@ -843,7 +866,8 @@ int main(int argc, char** argv)
     Child knob = {0, -1, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, -1, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
-    int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
+    int guard = -1, lock = -1, bus, device, type, resets = 0;
+    UsbRetry retry = {PHONE_NONE, {0, 0, 0, 0}};
     int recovered = 0; /* pid of a native_service whose stale lock we took over */
     long long absent_since = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
@@ -1060,8 +1084,10 @@ int main(int argc, char** argv)
             continue;
         }
         type = find_phone(&bus, &device);
+        if (stopping)
+            break;
         if (!type) {
-            attempts = 0;
+            retry.type = PHONE_NONE;
             /* gone for more than 10 s: really unplugged (a USB reset of ours only makes it vanish for a moment) */
             if (!absent_since)
                 absent_since = ms();
@@ -1075,7 +1101,7 @@ int main(int argc, char** argv)
         /* The last attempt failed (user 2026-11-12: after "Restart Android Auto" the phone often did not come back until
          * it was replugged): reset its USB port, the software version of pulling the cable, and try again. "Reconnect the
          * phone" only after 3 resets in a row; a real unplug (> 10 s) or a good session starts the count again. */
-        if (attempts > 0) {
+        if (usb_retry_matches(retry, usb_retry_target(type, bus, device))) {
             if (resets >= 3) {
                 report("replug_required", session);
                 g_incident_session = session;
@@ -1086,14 +1112,19 @@ int main(int argc, char** argv)
             ++resets;
             report("connecting", session);
             reset_phone(bus, device, type, resets);
-            attempts = 0;
+            retry.type = PHONE_NONE;
             sleep(3);
             continue;
+        }
+        if (retry.type != PHONE_NONE) {
+            printf("native_service: USB candidate changed after failed attempt; skipping reset\n");
+            retry.type = PHONE_NONE;
         }
 
         /* step 2: switch a normal-mode phone to accessory mode; it then reappears as 18d1:2d00/2d01 */
         if (type == PHONE_NORMAL) {
             Child sw;
+            const UsbRetry switch_target = usb_retry_target(type, bus, device);
             char* args[] = {"./nbt_android_auto", "--switch-aa", bus_text, device_text, 0};
             char id[16];
             report("connecting", session);
@@ -1118,7 +1149,7 @@ int main(int argc, char** argv)
                     continue;
                 }
                 if (action == AOA_SWITCH_RETRY) {
-                    ++attempts;
+                    retry = switch_target;
                     sleep(1);
                     continue;
                 }
@@ -1128,7 +1159,7 @@ int main(int argc, char** argv)
                 if (reenumerated < 0)
                     break;
                 if (!reenumerated) {
-                    ++attempts;
+                    retry = switch_target;
                     continue;
                 }
             }
@@ -1136,7 +1167,7 @@ int main(int argc, char** argv)
 
         /* step 3: the video chain for this session */
         report("connecting", session);
-        ++attempts;
+        retry = usb_retry_target(PHONE_ACCESSORY, bus, device);
         ++session;
         snprintf(video_token, sizeof(video_token), "%ld-%u", (long)getpid(), session);
         unlink(NBT_VIDEO_CONTROL);
@@ -1289,8 +1320,10 @@ int main(int argc, char** argv)
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
-                if (ms() - began >= 60000)
-                    attempts = resets = 0;
+                if (ms() - began >= 60000) {
+                    retry.type = PHONE_NONE;
+                    resets = 0;
+                }
             }
         }
 
