@@ -125,6 +125,7 @@ def add_nbt_aad(archive, checkout):
         # 2. Mbed TLS crypto backend instead of upstream's OpenSSL one
         (src / "aa_cryptor.cpp").write_bytes(text(ROOT / "src/android_auto/aa_cryptor_mbedtls.cpp"))
         (src / "aa_cryptor.hpp").write_bytes(text(ROOT / "src/android_auto/aa_cryptor.hpp"))
+        (src / "video_acks.hpp").write_bytes(text(ROOT / "src/android_auto/video_acks.hpp"))
         # 3. patches/*.patch (paths milestone-7/src/...)
         for patch in sorted((ROOT / "patches").glob("*.patch")):
             subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch)], cwd=work, check=True)
