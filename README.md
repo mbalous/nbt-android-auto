@@ -9,6 +9,10 @@ No separate Android Auto interface is needed. NBT Evo and CIC are not supported.
 > after a cable swap, but full vehicle testing is still pending. Host CI does not verify QNX compatibility or vehicle
 > safety. Read the [disclaimer](#disclaimer) before installing.
 
+> **Warning:** NEVER run `/sbin/shutdown` on the BMW NBT head unit. It causes a boot lock that can only be cleared by
+> disconnecting the vehicle battery. If you need to restart the head unit, use the
+> [documented NBT restart procedure](src/idrive/reboot/README.md).
+
 [Video of an earlier prototype](https://www.instagram.com/reel/DfkW1wYsB__/) ·
 [Vehicle test notes](CAR-TEST-aa-dev.md) · [Changelog](CHANGELOG.md)
 
