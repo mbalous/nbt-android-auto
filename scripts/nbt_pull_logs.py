@@ -7,8 +7,9 @@ Run on the Mac after driving, with the ENET cable in and ignition on (SSH must a
     python3 scripts/nbt_pull_logs.py --summary DIR   # summary of an earlier pull again, no car needed
 
 Everything is read-only on the car: one SSH session prints the files, nothing is changed or deleted there.
-Fetched: events.log (+ .1), boots.log, logs/, logs.prev/, history/ (last 15 boots), incidents/, snapshots/, the RAM logs
-of the current boot (/fs/ram3/nbt-aa-*), and the QNX system log, process list and free flash space right now.
+Fetched: events.log (+ .1), boots.log, logs/, logs.prev/, history/ (last 15 boots), incidents/, session-summaries/,
+snapshots/, the RAM logs of the current boot (/fs/ram3/nbt-aa-*), and the QNX system log, process list and free flash
+space right now.
 Saved to .local/car-logs/<time>/ (git-ignored: it can contain phone names and car details), with summary.md.
 Set NBT_HOST to change the address (default 169.254.199.99), NBT_SSH_KEY to log in with a key instead of the password.
 """
@@ -32,8 +33,21 @@ T=%(token)s
 P=%(pkg)s
 emit() { echo "<<<$T BEGIN $1>>>"; cat "$1" 2>/dev/null; echo; echo "<<<$T END>>>"; }
 run() { echo "<<<$T BEGIN live/$1>>>"; shift; sh -c "$*" 2>&1; echo; echo "<<<$T END>>>"; }
-for f in $P/events.log $P/events.log.1 $P/boots.log $P/boot-count; do test -f $f && emit $f; done
-for d in $P/logs $P/logs.prev $P/history $P/incidents $P/snapshots; do
+EVENT_STATUS=
+for f in $P/events.log $P/events.log.1; do
+  if test -f "$f"; then
+    echo "<<<$T BEGIN $f>>>"
+    if cat "$f" 2>/dev/null; then s=readable; else s=unreadable; fi
+    echo; echo "<<<$T END>>>"
+  else s=missing; fi
+  EVENT_STATUS="$EVENT_STATUS
+`basename "$f"`=$s"
+done
+echo "<<<$T BEGIN live/events-status.txt>>>"
+echo "$EVENT_STATUS"
+echo "<<<$T END>>>"
+for f in $P/boots.log $P/boot-count; do test -f $f && emit $f; done
+for d in $P/logs $P/logs.prev $P/history $P/incidents $P/snapshots $P/session-summaries; do
   test -d $d && for f in `find $d -type f 2>/dev/null`; do emit $f; done
 done
 for f in /fs/ram3/nbt-aa-* /fs/ram3/nbt-cluster.log /fs/ram3/nbt-aa-native/*.log /fs/ram3/nbt-aa-native/status \
@@ -179,8 +193,20 @@ def summary(dest):
     if last_pull:
         out("Entries newer than the previous pull (%s) are marked **NEW**.\n" % last_pull)
 
-    events = read(car / "events.log.1") + read(car / "events.log")
-    ev = [l for l in events.splitlines() if TS.match(l)]
+    event_parts, event_errors = [], []
+    for path in (car / "events.log.1", car / "events.log"):
+        try:
+            event_parts.append(path.read_text("utf-8", "replace"))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            event_errors.append(path.name)
+    for line in read(dest / "live" / "events-status.txt").splitlines():
+        if line in ("events.log=unreadable", "events.log.1=unreadable"):
+            name = line.split("=", 1)[0]
+            if name not in event_errors:
+                event_errors.append(name)
+    ev = [l for text in event_parts for l in text.splitlines() if TS.match(l)]
 
     # sessions
     starts = [l for l in ev if "session running" in l]
@@ -188,14 +214,19 @@ def summary(dest):
     reasons = Counter(re.sub(r" after \d+s.*", "", l.split("session end: ", 1)[1]) for l in ends)
     short = [l for l in ends if re.search(r"after ([0-9]|[1-5][0-9])s", l)]
     out("## Sessions\n")
-    out("- %d sessions started, %d ended (%d within a minute)" % (len(starts), len(ends), len(short)))
+    if not event_parts or event_errors:
+        out("- event-based session counts unavailable%s" %
+            (" (unreadable: %s)" % ", ".join(event_errors) if event_errors else ""))
+    else:
+        out("- %d sessions started, %d ended (%d within a minute) in available event logs" %
+            (len(starts), len(ends), len(short)))
     for r_, c in reasons.most_common():
         out("  - %dx %s" % (c, r_))
 
     # incidents
     inc = [l for l in ev if " INCIDENT " in l]
     kinds = Counter(l.split(" INCIDENT ", 1)[1].split()[0] for l in inc)
-    out("\n## Incidents (%d)\n" % len(inc))
+    out("\n## Incidents%s\n" % (" (%d)" % len(inc) if event_parts and not event_errors else " (event log unavailable)"))
     for k, c in kinds.most_common():
         out("- %dx %s" % (c, k))
     for l in inc[-25:]:
@@ -210,10 +241,24 @@ def summary(dest):
         for l in hard[-20:]:
             out("- `%s`" % l.strip()[:200])
 
+    out("\n## Retained session summaries\n")
+    summaries = sorted((car / "session-summaries").glob("*.txt"))
+    if not summaries:
+        out("- none available (opt-in diagnostics; records may be incomplete)")
+    for path in summaries:
+        if path.stat().st_size > 4096:
+            out("- `%s`: record exceeds size limit" % path.relative_to(dest))
+            continue
+        out("- `%s`:\n```text\n%s\n```" % (path.relative_to(dest), read(path).rstrip()))
+
     # boots: a boot right after activity while a session ran = suspected reboot while driving
     out("\n## Head-unit boots\n")
-    boots = [l for l in read(car / "boots.log").splitlines() if TS.match(l)]
-    out("- %d boots recorded" % len(boots))
+    try:
+        boot_text = (car / "boots.log").read_text("utf-8", "replace")
+    except OSError:
+        boot_text = None
+    boots = [l for l in (boot_text or "").splitlines() if TS.match(l)]
+    out("- %d boots recorded" % len(boots) if boot_text is not None else "- boot log unavailable")
     hist = car / "history"
     for d in sorted(hist.glob("boot-*"), key=lambda p: int(re.sub(r"\D", "", p.name) or 0)):
         st = [l for l in read(d / "states.txt").splitlines() if TS.match(l)]
@@ -264,8 +309,9 @@ def summary(dest):
         out("- unavailable")
 
     out("\n## Error patterns in other pulled logs (may include older or duplicate entries)\n")
+    summary_dir = car / "session-summaries"
     other_logs = (f for folder in ("car", "live") for f in sorted((dest / folder).rglob("*"))
-                  if f not in (active, system_log))
+                  if f not in (active, system_log) and summary_dir not in f.parents)
     report_patterns(out, dest, other_logs, ERROR_PATTERNS)
 
     text = "\n".join(lines) + "\n"

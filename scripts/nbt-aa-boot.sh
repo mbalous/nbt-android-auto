@@ -19,6 +19,12 @@ if test -e $R/service.lock; then
   if kill -0 "$LP" 2>/dev/null; then echo "service already running (lock, pid $LP)"; exit 0; fi
   echo "possibly stale service.lock (pid $LP): native_service will check"
 fi
+# A power loss can leave an unpublished session record on flash.
+if test ! -e /fs/ram3/nbt-aa-booted; then
+  for f in "$P"/session-summaries/*-session-summary-??????.txt.tmp; do
+    if test -f "$f"; then rm -f "$f" || echo "cannot remove unfinished session summary: $f"; fi
+  done
+fi
 mkdir -p $R
 chmod 700 $R
 for f in native_service nbt_android_auto nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
@@ -92,30 +98,32 @@ fi
 # scripts/nbt_pull_logs.py on the Mac fetches all of it.
 L=$P/logs
 H=$P/history
-if test -e "$P/extended-log-history" && test ! -e /fs/ram3/nbt-aa-booted; then
-  N=`cat $P/boot-count 2>/dev/null`
-  case "$N" in ''|*[!0-9]*) N=0 ;; esac
-  N=$((N+1)); echo $N > $P/boot-count
-  rm -r $L.prev 2>/dev/null
-  if test -d $L; then
-    mkdir -p $H
-    OLD=`cat $L/boot-number 2>/dev/null`
-    case "$OLD" in ''|*[!0-9]*) OLD=$((N-1)) ;; esac
-    cp -r $L $H/boot-$OLD 2>/dev/null
-    mv $L $L.prev
+if test ! -e /fs/ram3/nbt-aa-booted; then
+  if test -e "$P/extended-log-history"; then
+    N=`cat $P/boot-count 2>/dev/null`
+    case "$N" in ''|*[!0-9]*) N=0 ;; esac
+    N=$((N+1)); echo $N > $P/boot-count
+    rm -r $L.prev 2>/dev/null
+    if test -d $L; then
+      mkdir -p $H
+      OLD=`cat $L/boot-number 2>/dev/null`
+      case "$OLD" in ''|*[!0-9]*) OLD=$((N-1)) ;; esac
+      cp -r $L $H/boot-$OLD 2>/dev/null
+      mv $L $L.prev
+    fi
+    n=0
+    for d in `ls -t -d $H/boot-* 2>/dev/null`; do n=$((n+1)); if test $n -gt 15; then rm -r $d; fi; done
+    # and at most ~20 MB in all (the flash is shared with iDrive): drop the oldest boots until it fits
+    while test `du -sk $H 2>/dev/null | sed 's/[^0-9].*//'` -gt 20000 2>/dev/null; do
+      o=`ls -t -d $H/boot-* 2>/dev/null | tail -1`; test -n "$o" || break; rm -r $o
+    done
+    mkdir -p $L
+    echo $N > $L/boot-number
+  else
+    rm -r $L.prev 2>/dev/null
+    if test -d $L; then mv $L $L.prev; fi
   fi
-  n=0
-  for d in `ls -t -d $H/boot-* 2>/dev/null`; do n=$((n+1)); if test $n -gt 15; then rm -r $d; fi; done
-  # and at most ~20 MB in all (the flash is shared with iDrive): drop the oldest boots until it fits
-  while test `du -sk $H 2>/dev/null | sed 's/[^0-9].*//'` -gt 20000 2>/dev/null; do
-    o=`ls -t -d $H/boot-* 2>/dev/null | tail -1`; test -n "$o" || break; rm -r $o
-  done
-  mkdir -p $L
-  echo $N > $L/boot-number
-  echo $N > /fs/ram3/nbt-aa-booted
-elif test ! -e "$P/extended-log-history"; then
-  rm -r $L.prev 2>/dev/null
-  if test -d $L; then mv $L $L.prev; fi
+  echo 1 > /fs/ram3/nbt-aa-booted
 fi
 mkdir -p $L
 # optional passive MOST trace of the cluster graphics terminal (FBlock 0x82) right after the start, when the NBT creates
