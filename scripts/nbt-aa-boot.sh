@@ -21,8 +21,8 @@ if test -e $R/service.lock; then
 fi
 # A power loss can leave an unpublished session record on flash.
 if test ! -e /fs/ram3/nbt-aa-booted; then
-  for f in "$P"/session-summaries/*-session-summary-??????.txt.tmp; do
-    if test -f "$f"; then rm -f "$f" || echo "cannot remove unfinished session summary: $f"; fi
+  for summary in "$P"/session-summaries/*-session-summary-??????.txt.tmp; do
+    if test -f "$summary"; then rm -f "$summary" || echo "cannot remove unfinished session summary: $summary"; fi
   done
 fi
 mkdir -p $R
