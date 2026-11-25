@@ -174,8 +174,12 @@ Auto service (Android Auto page -> restart) or the head unit.
 ## 4. Logs: pull after driving
 With the explicit `incident-logging` flag, the car keeps `events.log` and `incidents/` (a snapshot with
 the QNX system log each time something goes wrong: program crash, session end, no picture, freeze, replug, iDrive
-restart, service recovered, user restart; newest 40). The separate `extended-log-history` flag keeps up to 15 boot
-histories and approximately 20 MB. Baseline `logs/`, `logs.prev/` and restart snapshots remain enabled as before.
+restart, service recovered, user restart; newest 40). It also keeps up to 15 compact session-end summaries in
+`session-summaries/`, including available USB stop and failure details. These records are best-effort: abrupt power
+loss, forced termination, missing logs or storage failures can leave them incomplete. Their capture fields preserve
+the reported validity of USB status and byte counts; they do not establish a root cause. The separate
+`extended-log-history` flag keeps up to 15 boot histories and approximately 20 MB. Baseline `logs/`, `logs.prev/`
+and restart snapshots remain enabled as before, with baseline logs rotated on head-unit boot rather than service restart.
 Logs may contain phone and vehicle details.
 After a drive, ENET cable in, ignition on:
 ```bash
@@ -184,7 +188,9 @@ python3 scripts/nbt_pull_logs.py
 It asks for the NBT root password once, saves everything to `.local/car-logs/<time>/` and prints `summary.md`
 (sessions and end reasons, incidents by kind, crashes / freezes, and suspected reboots while Android Auto ran).
 The summary separates the reported running session's capture, QNX system warnings, and other pulled logs, including
-leftover session files. A system warning alone does not establish an Android Auto fault. Read-only on the car.
+leftover session files. Event-based counts are unavailable when their event logs are missing or unreadable; sampled
+states are not exact session counts. Compare clocks before correlating sources. A system warning alone does not
+establish an Android Auto fault. Read-only on the car.
 
 ## 5. Microphone, calls and voice
 
@@ -197,7 +203,7 @@ microphone behavior.
 - `wheel-off` — steering roller stays with iDrive only.
 - `ptt-assistant` — long press of the steering-wheel voice button also sends the Assistant key over the cable.
 - `tls-allow-date-errors` — opt in to accepting expired or not-yet-valid certificates; all other TLS checks remain.
-- `incident-logging` — opt in to bounded incident snapshots and event logs.
+- `incident-logging` — opt in to bounded incident snapshots, event logs and compact session summaries.
 - `extended-log-history` — opt in to bounded boot history.
 - `usb-rx-16k` — diagnostic-only 16 KiB bulk IN requests instead of 64 KiB; read on Android Auto service start.
 

@@ -45,7 +45,9 @@
 #include "aoa_reenumeration.h"
 #include "video_recovery.h"
 
+#ifndef RUNTIME_DIR
 #define RUNTIME_DIR "/fs/ram3/nbt-aa-native"
+#endif
 /* the package folder on flash: switch and config files the user creates live here (native_service itself runs in
  * RUNTIME_DIR, so relative names there would never see them) */
 #define PKG_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT/"
@@ -226,7 +228,9 @@ static void audio_route_cleanup(void)
  * lines per session (start, end, how long, why) plus the tail of the HMI plugin's log are appended to the package
  * directory on flash. Bounded: at 128 KB the file is moved to events.log.1 (one generation kept). Written only on
  * session start/end and every 5 minutes while a session runs, so flash wear stays negligible. */
+#ifndef PERSIST_DIR
 #define PERSIST_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
+#endif
 #define PERSIST_LOG PERSIST_DIR "/events.log"
 
 static void plog_rotate(void)
@@ -320,6 +324,128 @@ static void incident(const char* kind, const char* detail, long long min_gap_ms)
     if (p > 0)
         while (waitpid(p, 0, 0) < 0 && errno == EINTR) {
         }
+}
+
+static void summary_error(const char* message)
+{
+    int saved_errno = errno;
+    struct stat st;
+    FILE* f = fopen("session-summary-errors.log",
+                    !stat("session-summary-errors.log", &st) && st.st_size > 32768 ? "w" : "a");
+    if (f) {
+        fprintf(f, "%s: errno=%d\n", message, saved_errno);
+        fclose(f);
+    } else
+        perror(message);
+}
+
+enum { SUMMARY_CAPTURE_NOT_STARTED, SUMMARY_CAPTURE_CANDIDATE, SUMMARY_CAPTURE_UNAVAILABLE };
+
+/* Copy a bounded tail before detaching: the next service can reuse capture-N.log. */
+static void session_summary(unsigned session, const char* detail, int capture_state)
+{
+    char name[] = "session-summary-XXXXXX", path[256], capture_name[48], line[1024], evidence[3000] = "";
+    size_t used = 0;
+    int fd, truncated = 0, read_error = 0, capture_available = 0;
+    long length = 0;
+    FILE *capture = NULL, *out;
+    pid_t p;
+    time_t now;
+    char when[32];
+    if (access(PERSIST_DIR "/incident-logging", F_OK))
+        return;
+    if (capture_state == SUMMARY_CAPTURE_CANDIDATE) {
+        snprintf(capture_name, sizeof(capture_name), "capture-%u.log", session);
+        capture = fopen(capture_name, "r");
+        if (capture) {
+            capture_available = 1;
+            if (fseek(capture, 0, SEEK_END) || (length = ftell(capture)) < 0 ||
+                fseek(capture, length > 32768 ? length - 32768 : 0, SEEK_SET)) {
+                read_error = 1;
+            } else {
+                if (length > 32768)
+                    (void)fgets(line, sizeof(line), capture);
+                while (fgets(line, sizeof(line), capture)) {
+                    if (!strncmp(line, "AA_USB_IN_", 10) || !strncmp(line, "AA_USB_OUT_", 11) ||
+                        !strncmp(line, "AA_USB_TRANSPORT_SUMMARY ", 25) ||
+                        !strncmp(line, "AA_USB_CAPTURE_STOP ", 20) ||
+                        !strncmp(line, "AA_VIDEO_CAPTURE_STOP ", 22) ||
+                        !strncmp(line, "AA_VIDEO_CAPTURE_END ", 21)) {
+                        size_t n = strlen(line);
+                        if (n >= sizeof(evidence) - used) {
+                            truncated = 1;
+                            break;
+                        }
+                        memcpy(evidence + used, line, n + 1);
+                        used += n;
+                    }
+                }
+                if (ferror(capture))
+                    read_error = 1;
+            }
+            fclose(capture);
+        }
+    }
+    fd = mkstemp(name);
+    if (fd < 0) {
+        summary_error("cannot create session summary");
+        return;
+    }
+    out = fdopen(fd, "w");
+    if (!out) {
+        summary_error("cannot open session summary");
+        close(fd);
+        unlink(name);
+        return;
+    }
+    now = time(NULL);
+    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(out, "session=%ld-%u time=%s uptime_ms=%lld\noutcome=%s\n",
+            (long)getpid(), session, when, ms(), detail);
+    fprintf(out, "capture=%s tail_bytes=%ld read_error=%d evidence_truncated=%d\n",
+            capture_state == SUMMARY_CAPTURE_NOT_STARTED ? "not_started" : !capture_available ? "unavailable" : "tail_only",
+            length > 32768 ? 32768L : length, read_error, truncated);
+    fputs(evidence, out);
+    if (fclose(out)) {
+        summary_error("cannot write session summary");
+        unlink(name);
+        return;
+    }
+    snprintf(path, sizeof(path), RUNTIME_DIR "/%s", name);
+    p = fork();
+    if (p == 0) {
+        pid_t worker = fork();
+        if (worker == 0) {
+            struct stat st;
+            int flags = O_WRONLY | O_CREAT | O_APPEND;
+            int errors;
+            if (!stat("session-summary-errors.log", &st) && st.st_size > 32768)
+                flags |= O_TRUNC;
+            errors = open("session-summary-errors.log", flags, 0600);
+            if (errors >= 0) {
+                dup2(errors, 2);
+                if (errors > 2)
+                    close(errors);
+            }
+            setpgid(0, 0);
+            execl("/bin/sh", "sh", PERSIST_DIR "/incident.sh", "session-summary", path, (char*)0);
+            perror("cannot execute session summary worker");
+            unlink(name);
+            _exit(127);
+        }
+        if (worker < 0) {
+            summary_error("cannot detach session summary worker");
+            unlink(name);
+        }
+        _exit(0);
+    }
+    if (p < 0) {
+        summary_error("cannot start session summary worker");
+        unlink(name);
+    } else {
+        while (waitpid(p, 0, 0) < 0 && errno == EINTR) {
+        }
+    }
 }
 
 /* ---- child processes ------------------------------------------------------------------------------------------- */
@@ -1074,7 +1200,8 @@ int main(int argc, char** argv)
     while (!stopping && alive(&lease)) {
         char session_end[160] = "";
         char video_token[64];
-        int video_started = 0;
+        int video_started = 0, capture_state = SUMMARY_CAPTURE_NOT_STARTED, capture_evidence_safe = 1;
+        long long session_began;
         audio_route_cleanup();
         /* Optional HMI gate (file gate.mode in the runtime directory): the phone is only touched after the Android Auto
          * page in the HMI was opened, which creates /fs/ram3/nbt-aa-request (see src/idrive/aa_entry_plugin.cpp). */
@@ -1170,6 +1297,7 @@ int main(int argc, char** argv)
         report("connecting", session);
         retry = usb_retry_target(PHONE_ACCESSORY, bus, device);
         ++session;
+        session_began = ms();
         snprintf(video_token, sizeof(video_token), "%ld-%u", (long)getpid(), session);
         unlink(NBT_VIDEO_CONTROL);
         unlink(NBT_VIDEO_STATUS);
@@ -1216,10 +1344,17 @@ int main(int argc, char** argv)
             {
                 char capname[40];
                 snprintf(capname, sizeof(capname), "capture-%u.log", session);
+                if (!access(PERSIST_DIR "/incident-logging", F_OK) &&
+                    unlink(capname) && errno != ENOENT) {
+                    summary_error("cannot clear previous capture log");
+                    capture_evidence_safe = 0;
+                }
                 /* /opt/sys/lib last: liba2i_client.so (A2I audio output) and what it links */
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH ":/opt/sys/lib", 1);
                 unlink("/fs/ram3/nbt-aa-media"); /* the phone's media state, written anew by this session */
                 capture = spawn(args, 0, capname);
+                if (capture.started_pid > 0)
+                    capture_state = capture_evidence_safe ? SUMMARY_CAPTURE_CANDIDATE : SUMMARY_CAPTURE_UNAVAILABLE;
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
             report("running", session);
@@ -1339,6 +1474,11 @@ int main(int argc, char** argv)
         end_after(&capture, 10000);
         if (*session_end && !stopping)
             incident("session-end", session_end, 30000);
+        if (!*session_end)
+            snprintf(session_end, sizeof(session_end), "%s after %llds",
+                     stopping ? "service stopping during startup" : "video chain startup failed",
+                     (ms() - session_began) / 1000);
+        session_summary(session, session_end, capture_state);
         audio_route_cleanup();
         if (!live)
             end(&http);

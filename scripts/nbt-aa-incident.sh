@@ -8,7 +8,30 @@
 # everything else: it never stops or changes a process.
 P=/var/opt/hmi/data/rw/NbtAndroidAutoRT
 R=/fs/ram3/nbt-aa-native
-test -e "$P/incident-logging" || exit 0
+if test ! -e "$P/incident-logging"; then
+  if test "$1" = session-summary; then
+    case "$2" in "$R"/session-summary-??????) rm -f "$2" ;; esac
+  fi
+  exit 0
+fi
+if test "$1" = session-summary; then
+  S=$2
+  case "$S" in "$R"/session-summary-??????) ;; *) echo "invalid session summary source" >&2; exit 1 ;; esac
+  D=$P/session-summaries
+  mkdir -p "$D" || { echo "cannot create session summary directory" >&2; rm -f "$S"; exit 1; }
+  F=$D/`date +%Y%m%d-%H%M%S`-`basename "$S"`.txt
+  if test -e "$F"; then echo "session summary already exists: $F" >&2; rm -f "$S"; exit 1; fi
+  if ! dd if="$S" of="$F.tmp" bs=4096 count=1 2>/dev/null; then
+    echo "cannot write session summary: $F" >&2; rm -f "$F.tmp" "$S"; exit 1
+  fi
+  if ! mv "$F.tmp" "$F"; then
+    echo "cannot publish session summary: $F" >&2; rm -f "$F.tmp" "$S"; exit 1
+  fi
+  rm -f "$S" || echo "cannot remove session summary staging file: $S" >&2
+  n=0
+  for f in `ls -t $D/*.txt 2>/dev/null`; do n=$((n+1)); if test $n -gt 15; then rm -f "$f" || echo "cannot remove old summary: $f" >&2; fi; done
+  exit 0
+fi
 # sed, not tr: QNX tr takes 'a-z' literally (car 2026-11-20: "freeze" became "z", "session-end" became "-")
 K=`echo "${1:-unknown}" | sed 's/[^a-z0-9-]//g' | cut -c1-32`
 test -n "$K" || K=unknown

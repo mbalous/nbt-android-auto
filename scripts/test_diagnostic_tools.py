@@ -44,6 +44,32 @@ class LogSummaryTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
+    def test_missing_and_empty_event_logs_are_distinguished(self):
+        self.dest.mkdir()
+        self.assertIn("event-based session counts unavailable", nbt_pull_logs.summary(self.dest))
+        self.assertIn("boot log unavailable", nbt_pull_logs.summary(self.dest))
+        events = "car/var/opt/hmi/data/rw/NbtAndroidAutoRT/events.log"
+        self.write(events, "")
+        text = nbt_pull_logs.summary(self.dest)
+        self.assertIn("0 sessions started, 0 ended", text)
+        self.assertNotIn("event-based session counts unavailable", text)
+
+    def test_remote_event_read_failure_is_not_reported_as_zero(self):
+        self.write("car/var/opt/hmi/data/rw/NbtAndroidAutoRT/events.log", "")
+        self.write("live/events-status.txt", "events.log=unreadable\nevents.log.1=missing\n")
+        text = nbt_pull_logs.summary(self.dest)
+        self.assertIn("event-based session counts unavailable (unreadable: events.log)", text)
+        self.assertNotIn("0 sessions started", text)
+
+    def test_session_records_are_shown_without_double_counting_errors(self):
+        record = "car/var/opt/hmi/data/rw/NbtAndroidAutoRT/session-summaries/one.txt"
+        self.write(record, "session=1-2 time=2026-11-25 14:42:37 uptime_ms=123\n"
+                   "outcome=capture ended\nAA_USB_IN_FAILED actual_valid=0\n")
+        text = nbt_pull_logs.summary(self.dest)
+        self.assertIn("session-summaries/one.txt", text)
+        self.assertIn("AA_USB_IN_FAILED actual_valid=0", text)
+        self.assertNotIn("1x USB transfer failed", text)
+
     def test_running_capture_is_separate_from_old_usb_failures_and_system_warnings(self):
         ram = "car/fs/ram3/"
         self.write(ram + "nbt-aa-state", "state=running\nphone=1\nsession=1\n")
