@@ -8,10 +8,8 @@ needs SSH access to the NBT: its IP address and root password. The password is n
 The stock NBT does not accept SSH logins, so SSH must first be unlocked.
 
 - **How the developer did it:** with **FeatureInstaller**. This can take **several attempts**, and the last step may
-  report **errors even when SSH was enabled**. Check the connection afterwards, for example with
-  `ssh root@169.254.199.99`.
-- **Root password:** see the [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
-  The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
+  report **errors even when SSH was enabled**. Check the connection afterwards using the
+  [head unit SSH guide](../docs/WORKFLOW.md#ssh-shortcut).
 
 Enabling SSH changes the device configuration. As with everything here, you do it at your own risk.
 
@@ -20,9 +18,9 @@ Enabling SSH changes the device configuration. As with everything here, you do i
 If upgrading from a version before the executable rename, uninstall the previous package first and restart iDrive.
 The installer does not migrate old files automatically.
 
-1. Connect the Linux or WSL laptop to the car with an ENET cable and switch on the ignition. The usual NBT address is
-   `169.254.199.99`. On WSL, ensure the ENET link-local interface (`169.254.x.x`) is reachable from Linux (for example,
-   with WSL mirrored networking) and use `--cli` if no X11/WSLg display is available.
+1. Connect the Linux or WSL laptop to the car with an ENET cable and switch on the ignition. See the
+   [head unit SSH guide](../docs/WORKFLOW.md#ssh-shortcut) for the address and WSL networking. Use `--cli` if no
+   X11/WSLg display is available.
 2. Install the Python dependency (once):
    ```sh
    pip3 install "paramiko>=3.4,<4"   # paramiko 4+ no longer supports the NBT's old ssh-rsa

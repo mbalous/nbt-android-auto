@@ -8,13 +8,14 @@ Linux/WSL shell in the repository folder.
 
 ## SSH shortcut
 
-Define this helper function once per shell session; every car command below starts with `car`:
+Verify the head unit's SSH host key through a trusted independent channel before connecting; keep host-key checking
+enabled. Define this helper function once per shell session; every car command below starts with `car`:
 
 ```sh
 car() {
   ssh -oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa -oMACs=+hmac-sha1 \
       -oPreferredAuthentications=password,keyboard-interactive -oPubkeyAuthentication=no \
-      -oIdentitiesOnly=yes root@169.254.199.99 "$@"
+      -oIdentitiesOnly=yes -oStrictHostKeyChecking=yes root@169.254.199.99 "$@"
 }
 ```
 
@@ -22,9 +23,13 @@ On distros whose OpenSSL blocks SHA-1 signatures (such as Fedora WSL), prefix `O
 the `ssh` command. On WSL, ensure the ENET link-local network (`169.254.199.99`) is reachable from Linux (for example
 via WSL mirrored networking).
 
-The default root password is `ts&SK412`. SSH has to be enabled once first: see
-[Getting SSH access](../README.md#getting-ssh-access) or the free serial method in
-[SSH-ACCESS-SERIAL.md](SSH-ACCESS-SERIAL.md).
+The [serial SSH guide](SSH-ACCESS-SERIAL.md#enabling-ssh) documents the default root password. To enable SSH, see
+[README.md](../README.md#enable-ssh) or the serial guide.
+
+The password may have been changed. Treat it as sensitive: do not put it in commands, process arguments, logs, new files
+or responses. For interactive access, use the SSH prompt. For noninteractive access, use a protected pipe or file
+descriptor (for example, `sshpass -d`) to supply the correct password without printing it. Do not repeatedly retry failed
+authentication.
 
 The head unit's shell has no `head`: use `sed 3q` instead (`tail` exists). Its `grep` has no `-A` / `-B`.
 
