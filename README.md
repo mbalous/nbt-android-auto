@@ -39,14 +39,13 @@ next session to fall back to Bluetooth. Software volume on `f6` may be attenuate
 
 - Original BMW NBT, not NBT Evo or CIC.
 - SSH root access to the head unit.
-- Linux or WSL laptop connected to the car by ENET; the usual NBT address is `169.254.199.99`.
+- Linux or WSL laptop connected to the car by ENET; see the [head unit SSH guide](docs/WORKFLOW.md#ssh-shortcut).
 - Android phone and USB cable.
 
 ### Enable SSH
 
 Stock NBT does not accept SSH logins. The developer used FeatureInstaller to unlock it; this can take several attempts
-and may report an error even when it succeeds. Check with `ssh root@169.254.199.99`. The default root password is
-`ts&SK412`.
+and may report an error even when it succeeds. Check the connection using the [head unit SSH guide](docs/WORKFLOW.md#ssh-shortcut).
 
 Alternatively, follow the [serial-port SSH guide](docs/SSH-ACCESS-SERIAL.md). Unlocking SSH changes the head unit's
 configuration and is at your own risk.

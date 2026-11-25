@@ -6,3 +6,8 @@ by disconnecting the vehicle battery.
 
 To reset the head unit, **use the vehicle's ZGW (central gateway)** to send the diagnostic reset to the NBT.
 Follow the [documented NBT reset procedure](src/idrive/reboot/README.md).
+
+## Head unit SSH
+
+Before connecting, follow the [head unit SSH guide](docs/WORKFLOW.md#ssh-shortcut) for connection settings,
+host-key verification and credential handling. Use read-only commands unless the user has authorized changes.

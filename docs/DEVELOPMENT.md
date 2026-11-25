@@ -17,7 +17,7 @@ See below for the historical binary comparison with installer 2026.11.10.2.
   linking (see below). Never commit them.
 
 On WSL, native Linux networking must be able to reach both the QNX VM (host-only/bridged address) and the NBT ENET
-link-local interface (`169.254.199.99`, e.g. via WSL mirrored networking).
+link-local interface; see the [head unit SSH guide](WORKFLOW.md#ssh-shortcut).
 
 Private files belong in `.local/` and build output in `build/`; both are ignored by git.
 
