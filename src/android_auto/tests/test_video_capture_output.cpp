@@ -155,6 +155,47 @@ void test_live_recovery()
     expect_live_output(c, frame);
 }
 
+void test_drop_keyframe_request()
+{
+    Capture c;
+    c.live = true;
+    KeyframeAsk ask;
+    std::vector<uint8_t> frame(2 * 1024 * 1024, 0xaa);
+    memcpy(frame.data(), kFrame, sizeof(kFrame));
+    feed_video(frame.data(), frame.size(), 1, &c);
+    feed_video(frame.data(), frame.size(), 2, &c);
+    require(c.queue.dropping && c.queue.keyframe_wanted, "queue overflow requests a keyframe");
+    require(keyframe_step(&c, ask, 4999, false, true) == KeyframeAsk::none, "no ask before session settles");
+    require(keyframe_step(&c, ask, 5000, false, false) == KeyframeAsk::none, "no ask while iDrive owns focus");
+    require(keyframe_step(&c, ask, 5100, true, true) == KeyframeAsk::focus_off, "lost frame asks phone");
+    require(!c.queue.keyframe_wanted, "one request consumes the recorded drop");
+    require(keyframe_step(&c, ask, 5599, true, true) == KeyframeAsk::none, "focus gap is at least 500 ms");
+    require(keyframe_step(&c, ask, 7000, false, false) == KeyframeAsk::none, "don't restore over iDrive");
+    require(keyframe_step(&c, ask, 7100, true, true) == KeyframeAsk::focus_on, "restore after iDrive returns");
+    feed_video(kFrame, sizeof(kFrame), 3, &c);
+    require(keyframe_step(&c, ask, 15099, true, true) == KeyframeAsk::none, "requests limited to one per 10 s");
+    require(keyframe_step(&c, ask, 15100, true, true) == KeyframeAsk::focus_off, "continued drops retry");
+    ask.restored();
+    require(keyframe_step(&c, ask, 15600, true, true) == KeyframeAsk::none,
+            "an external focus restore cancels the pending half");
+    feed_video(kFrame, sizeof(kFrame), 4, &c);
+    const uint8_t idr[] = {0, 0, 0, 1, 0x65, 0xaa};
+    feed_video(idr, sizeof(idr), 5, &c);
+    require(!c.queue.keyframe_wanted && keyframe_step(&c, ask, 26000, true, true) == KeyframeAsk::none,
+            "natural IDR cancels an unneeded request");
+    feed_video(frame.data(), frame.size(), 6, &c);
+    require(c.queue.keyframe_wanted, "another overflow records another request");
+    pause_live_writer(&c);
+    require(!c.queue.keyframe_wanted && keyframe_step(&c, ask, 36000, true, true) == KeyframeAsk::none,
+            "decoder restart clears pending drop and prevents competing focus cycles");
+
+    KeyframeAsk clock_failure;
+    require(clock_failure.step(100, true, true, true) == KeyframeAsk::focus_off, "start focus cycle");
+    require(clock_failure.step(-1, false, false, false) == KeyframeAsk::none, "clock failure respects iDrive focus");
+    require(clock_failure.step(-1, false, false, true) == KeyframeAsk::focus_on,
+            "clock failure does not strand phone in native focus");
+}
+
 void test_video_ack_queue()
 {
     nbt::AASession session;
@@ -476,6 +517,7 @@ int main()
     test_diagnostic_capture();
     test_live_stream();
     test_live_recovery();
+    test_drop_keyframe_request();
     test_video_ack_queue();
     test_fifo_reconnect();
     test_socket_backpressure();

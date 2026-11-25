@@ -949,6 +949,7 @@ int main(int argc, char** argv)
         }
         setenv("NBT_AA_VIDEO_FPS", fps, 1);
         setenv("NBT_AA_VIDEO_GATE", access(PKG_DIR "video.gate.off", F_OK) ? "1" : "0", 1);
+        setenv("NBT_AA_DROP_IDR", access(PKG_DIR "video.drop-idr", F_OK) ? "0" : "1", 1);
     }
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
