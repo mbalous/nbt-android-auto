@@ -10,8 +10,8 @@ No separate Android Auto interface is needed. NBT Evo and CIC are not supported.
 > safety. Read the [disclaimer](#disclaimer) before installing.
 
 > **Warning:** NEVER run `/sbin/shutdown` on the BMW NBT head unit. It causes a boot lock that can only be cleared by
-> disconnecting the vehicle battery. If you need to restart the head unit, use the
-> [documented NBT restart procedure](src/idrive/reboot/README.md).
+> disconnecting the vehicle battery. To reset the head unit, use the vehicle's ZGW (central gateway) as described in
+> the [NBT reset guide](src/idrive/reboot/README.md).
 
 [Video of an earlier prototype](https://www.instagram.com/reel/DfkW1wYsB__/) ·
 [Vehicle test notes](CAR-TEST-aa-dev.md) · [Changelog](CHANGELOG.md)

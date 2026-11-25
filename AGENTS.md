@@ -4,4 +4,5 @@
 SSH, on the serial console, or through scripts or automation. The command causes a boot lock that can only be cleared
 by disconnecting the vehicle battery.
 
-If a restart is needed, follow the [documented NBT restart procedure](src/idrive/reboot/README.md) instead.
+To reset the head unit, **use the vehicle's ZGW (central gateway)** to send the diagnostic reset to the NBT.
+Follow the [documented NBT reset procedure](src/idrive/reboot/README.md).
